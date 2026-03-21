@@ -132,6 +132,14 @@ function supportsRemux(settings = state.settings) {
   return Boolean(settings) && !settings.audioOnly && settings.format === "mp4";
 }
 
+function getVisibleRemuxOptions(settings = state.settings) {
+  if (!Array.isArray(state.client?.remuxVideoOptions)) {
+    return ["none"];
+  }
+
+  return supportsRemux(settings) ? state.client.remuxVideoOptions : ["none"];
+}
+
 function getVisibleQualityValues() {
   if (!state.client) {
     return [];
@@ -321,19 +329,13 @@ function syncForm() {
     state.settings.format,
     "format"
   );
-
-  if (supportsRemux(state.settings)) {
-    elements.remuxField.hidden = false;
-    renderChoiceGroup(
-      elements.remuxGroup,
-      state.client.remuxVideoOptions,
-      state.settings.remuxVideo,
-      "remuxVideo"
-    );
-  } else {
-    elements.remuxField.hidden = true;
-    elements.remuxGroup.replaceChildren();
-  }
+  elements.remuxField.hidden = false;
+  renderChoiceGroup(
+    elements.remuxGroup,
+    getVisibleRemuxOptions(state.settings),
+    state.settings.remuxVideo,
+    "remuxVideo"
+  );
 }
 
 function setBusy(isBusy) {
