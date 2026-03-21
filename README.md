@@ -13,7 +13,7 @@ Minimal single-page yt-dlp UI built with native Node.js APIs only.
 npm start
 ```
 
-The app listens on the host and port defined in [`config.json`](/Users/ahmet/Developer/ytdlp-web-ui/config.json).
+The app listens on the host and port defined in [`config.json`](./config.json).
 
 ## Password auth
 
@@ -24,7 +24,7 @@ To enable it:
 1. Copy `.env.example` to `.env`.
 2. Set `APP_PASSWORD`.
 3. Set a long random `SESSION_SECRET`.
-4. Change `auth.requirePassword` to `true` in [`config.json`](/Users/ahmet/Developer/ytdlp-web-ui/config.json).
+4. Change `auth.requirePassword` to `true` in [`config.json`](./config.json).
 5. If you are serving the app over HTTPS, set `auth.secureCookies` to `true`.
 
 The browser stores the session token in both a cookie and `localStorage`, so you only need to unlock once per device/session window.
@@ -33,7 +33,7 @@ The browser stores the session token in both a cookie and `localStorage`, so you
 
 Request throttling is disabled by default for personal use.
 
-If you want it, tune the values in [`config.json`](/Users/ahmet/Developer/ytdlp-web-ui/config.json):
+If you want it, tune the values in [`config.json`](./config.json):
 
 - `rateLimit.loginMaxAttempts`
 - `rateLimit.loginWindowMinutes`
