@@ -119,8 +119,33 @@ export function getSessionToken(request, config) {
   return "";
 }
 
+export function getCookieSessionToken(request, config) {
+  const cookies = parseCookies(request.headers.cookie);
+  const cookieToken = cookies[config.auth.cookieName];
+
+  if (
+    typeof cookieToken === "string" &&
+    cookieToken.length > 0 &&
+    cookieToken.length < 256
+  ) {
+    return cookieToken;
+  }
+
+  return "";
+}
+
 export function getValidatedSessionToken(request, config) {
   const token = getSessionToken(request, config);
+
+  if (!verifySessionToken(token, config)) {
+    return "";
+  }
+
+  return token;
+}
+
+export function getValidatedCookieSessionToken(request, config) {
+  const token = getCookieSessionToken(request, config);
 
   if (!verifySessionToken(token, config)) {
     return "";

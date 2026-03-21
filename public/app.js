@@ -33,6 +33,12 @@ const elements = {
   includePlaylist: document.querySelector("#includePlaylist"),
   logoutButton: document.querySelector("#logoutButton"),
   mediaUrl: document.querySelector("#mediaUrl"),
+  progressCard: document.querySelector("#progressCard"),
+  progressMessage: document.querySelector("#progressMessage"),
+  progressMeter: document.querySelector("#progressMeter"),
+  progressPercent: document.querySelector("#progressPercent"),
+  progressPhase: document.querySelector("#progressPhase"),
+  progressTrack: document.querySelector("#progressTrack"),
   qualityGroup: document.querySelector("#qualityGroup"),
   resetSettingsBtn: document.querySelector("#resetSettingsBtn"),
   results: document.querySelector("#results"),
@@ -41,11 +47,14 @@ const elements = {
 };
 
 const state = {
+  activeJobId: "",
   authenticated: false,
   authRequired: false,
   busy: false,
   client: null,
-  settings: null
+  jobStream: null,
+  settings: null,
+  snapshotTimerId: 0
 };
 
 function readLocalStorage(key) {
@@ -276,6 +285,7 @@ function setBusy(isBusy) {
   elements.audioOnly.disabled = isBusy;
   elements.downloadButton.disabled = isBusy;
   elements.includePlaylist.disabled = isBusy;
+  elements.logoutButton.disabled = isBusy;
   elements.mediaUrl.disabled = isBusy;
   elements.resetSettingsBtn.disabled = isBusy;
   const { authButton, password } = getAuthElements();
@@ -291,6 +301,97 @@ function setBusy(isBusy) {
   document.querySelectorAll(".choice").forEach((button) => {
     button.disabled = isBusy;
   });
+}
+
+function clearSnapshotTimer() {
+  if (!state.snapshotTimerId) {
+    return;
+  }
+
+  window.clearTimeout(state.snapshotTimerId);
+  state.snapshotTimerId = 0;
+}
+
+function closeJobStream() {
+  clearSnapshotTimer();
+
+  if (!state.jobStream) {
+    return;
+  }
+
+  state.jobStream.close();
+  state.jobStream = null;
+}
+
+function clearActiveJob() {
+  state.activeJobId = "";
+  closeJobStream();
+}
+
+function getPhaseLabel(status, progress) {
+  if (status === "queued") {
+    return "queued";
+  }
+
+  if (progress?.phase === "postprocessing") {
+    return "processing";
+  }
+
+  return "downloading";
+}
+
+function setProgressState({ progress = null, status = "running" } = {}) {
+  const normalizedPercent = Number.isFinite(progress?.percent)
+    ? Math.max(0, Math.min(100, progress.percent))
+    : null;
+  const phaseLabel = getPhaseLabel(status, progress);
+  const message =
+    progress?.message ||
+    (status === "queued"
+      ? "Waiting to start..."
+      : phaseLabel === "processing"
+        ? "Processing media..."
+        : "Downloading media...");
+
+  elements.progressCard.hidden = false;
+  elements.progressPhase.textContent = phaseLabel;
+  elements.progressMessage.textContent = message;
+  elements.progressPercent.textContent =
+    status === "queued" && normalizedPercent === null
+      ? "queued"
+      : normalizedPercent === null
+        ? "working"
+        : `${Math.round(normalizedPercent)}%`;
+
+  if (normalizedPercent === null) {
+    elements.progressTrack.dataset.indeterminate = "true";
+    elements.progressTrack.removeAttribute("aria-valuenow");
+    elements.progressTrack.setAttribute("aria-valuetext", message);
+    elements.progressMeter.style.width = "";
+    return;
+  }
+
+  elements.progressTrack.dataset.indeterminate = "false";
+  elements.progressTrack.setAttribute(
+    "aria-valuenow",
+    String(Math.round(normalizedPercent))
+  );
+  elements.progressTrack.setAttribute(
+    "aria-valuetext",
+    `${Math.round(normalizedPercent)} percent`
+  );
+  elements.progressMeter.style.width = `${normalizedPercent}%`;
+}
+
+function hideProgress() {
+  elements.progressCard.hidden = true;
+  elements.progressPhase.textContent = "";
+  elements.progressMessage.textContent = "";
+  elements.progressPercent.textContent = "";
+  elements.progressTrack.dataset.indeterminate = "false";
+  elements.progressTrack.removeAttribute("aria-valuenow");
+  elements.progressTrack.removeAttribute("aria-valuetext");
+  elements.progressMeter.style.width = "0%";
 }
 
 function bindAuthForm() {
@@ -433,8 +534,154 @@ function triggerBrowserDownload(file) {
   link.remove();
 }
 
+function parseEventPayload(event) {
+  if (!event || typeof event.data !== "string" || !event.data) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(event.data);
+  } catch {
+    return null;
+  }
+}
+
+function completeActiveJob(files = []) {
+  clearActiveJob();
+  setBusy(false);
+  hideProgress();
+  renderResults(files);
+
+  if (files.length === 1) {
+    triggerBrowserDownload(files[0]);
+    setStatus("File is ready.", "success");
+    return;
+  }
+
+  setStatus(`${files.length} files are ready.`, "success");
+}
+
+function failActiveJob(message) {
+  clearActiveJob();
+  setBusy(false);
+  hideProgress();
+  setStatus(message || "Download failed.", "error");
+}
+
+function applyJobSnapshot(snapshot) {
+  if (!snapshot || snapshot.jobId !== state.activeJobId) {
+    return;
+  }
+
+  setProgressState({
+    progress: snapshot.progress,
+    status: snapshot.status
+  });
+
+  if (snapshot.status === "completed") {
+    completeActiveJob(snapshot.files);
+    return;
+  }
+
+  if (snapshot.status === "failed") {
+    failActiveJob(snapshot.error);
+  }
+}
+
+async function syncJobSnapshot(jobId) {
+  if (!jobId || jobId !== state.activeJobId) {
+    return;
+  }
+
+  const snapshot = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+  applyJobSnapshot(snapshot);
+}
+
+function queueSnapshotSync(jobId) {
+  if (!jobId || jobId !== state.activeJobId || state.snapshotTimerId) {
+    return;
+  }
+
+  state.snapshotTimerId = window.setTimeout(async () => {
+    state.snapshotTimerId = 0;
+
+    try {
+      await syncJobSnapshot(jobId);
+    } catch (error) {
+      if (jobId !== state.activeJobId) {
+        return;
+      }
+
+      if (error.message === "Password required.") {
+        state.authenticated = false;
+        updateAuthVisibility();
+      }
+
+      failActiveJob(error.message);
+    }
+  }, 1200);
+}
+
+function openJobStream(jobId) {
+  closeJobStream();
+
+  const stream = new EventSource(`/api/jobs/${encodeURIComponent(jobId)}/events`);
+  state.jobStream = stream;
+
+  stream.addEventListener("snapshot", (event) => {
+    const payload = parseEventPayload(event);
+
+    if (payload) {
+      applyJobSnapshot(payload);
+    }
+  });
+
+  stream.addEventListener("progress", (event) => {
+    if (jobId !== state.activeJobId) {
+      return;
+    }
+
+    const payload = parseEventPayload(event);
+
+    if (!payload) {
+      return;
+    }
+
+    setProgressState({
+      progress: payload,
+      status: payload.phase === "postprocessing" ? "postprocessing" : "running"
+    });
+    setStatus(payload.message || "Download in progress...", "info");
+  });
+
+  stream.addEventListener("complete", (event) => {
+    if (jobId !== state.activeJobId) {
+      return;
+    }
+
+    const payload = parseEventPayload(event);
+    completeActiveJob(payload?.files || []);
+  });
+
+  stream.addEventListener("error", (event) => {
+    if (jobId !== state.activeJobId) {
+      return;
+    }
+
+    const payload = parseEventPayload(event);
+
+    if (payload && typeof payload.error === "string") {
+      failActiveJob(payload.error);
+      return;
+    }
+
+    queueSnapshotSync(jobId);
+  });
+}
+
 async function bootstrap() {
   setBusy(true);
+  hideProgress();
   setStatus("Loading...", "info");
 
   try {
@@ -444,6 +691,10 @@ async function bootstrap() {
     state.authRequired = payload.authRequired;
     state.authenticated = payload.authenticated;
     state.settings = normalizeSettings(getSavedSettings());
+
+    if (!state.authenticated) {
+      clearSavedToken();
+    }
 
     syncForm();
     updateAuthVisibility();
@@ -498,6 +749,10 @@ elements.logoutButton.addEventListener("click", async () => {
 elements.downloadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
+  if (state.busy || state.activeJobId) {
+    return;
+  }
+
   if (state.authRequired && !state.authenticated) {
     setStatus("Enter the password before downloading.", "error");
     focusPasswordInput();
@@ -513,6 +768,18 @@ elements.downloadForm.addEventListener("submit", async (event) => {
   }
 
   setBusy(true);
+  renderResults();
+  setProgressState({
+    progress: {
+      downloadedBytes: null,
+      etaSeconds: null,
+      message: "Creating download job...",
+      percent: null,
+      phase: "downloading",
+      totalBytes: null
+    },
+    status: "queued"
+  });
   setStatus("Preparing download...", "info");
 
   try {
@@ -527,24 +794,35 @@ elements.downloadForm.addEventListener("submit", async (event) => {
       })
     });
 
-    renderResults(payload.files);
-
-    if (payload.files.length === 1) {
-      triggerBrowserDownload(payload.files[0]);
-      setStatus("File is ready.", "success");
-    } else {
-      setStatus(`${payload.files.length} files are ready.`, "success");
-    }
+    state.activeJobId = payload.jobId;
+    setProgressState({
+      progress: {
+        downloadedBytes: null,
+        etaSeconds: null,
+        message: "Waiting for yt-dlp to start...",
+        percent: null,
+        phase: "downloading",
+        totalBytes: null
+      },
+      status: payload.status || "queued"
+    });
+    setStatus("Download in progress...", "info");
+    openJobStream(payload.jobId);
   } catch (error) {
+    hideProgress();
+
     if (error.message === "Password required.") {
       state.authenticated = false;
       updateAuthVisibility();
     }
 
     setStatus(error.message, "error");
-  } finally {
     setBusy(false);
   }
+});
+
+window.addEventListener("pagehide", () => {
+  closeJobStream();
 });
 
 bootstrap();

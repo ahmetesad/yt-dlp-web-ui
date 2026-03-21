@@ -2,8 +2,10 @@ import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import readline from "node:readline";
 import { AppError } from "./errors.js";
 import { validatePublicHttpUrl } from "./network.js";
+import { buildProgressArgs, parseProgressLine } from "./progress.js";
 
 const videoFormats = ["mp4", "webm"];
 const audioFormats = ["mp3", "m4a", "wav"];
@@ -61,7 +63,6 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
   const args = [
     "--no-config-locations",
     "--no-warnings",
-    "--no-progress",
     "--restrict-filenames",
     "--trim-filenames",
     "160",
@@ -71,7 +72,8 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
     "--paths",
     jobDir,
     "-o",
-    "%(title).120B_[%(id)s].%(ext)s"
+    "%(title).120B_[%(id)s].%(ext)s",
+    ...buildProgressArgs()
   ];
 
   if (proxyUrl) {
@@ -122,7 +124,28 @@ function normalizeYtDlpMessage(stderr, stdout) {
   return firstLine.slice(0, 240);
 }
 
-function runYtDlp(args) {
+function emitProgress(onProgress, progress) {
+  if (typeof onProgress !== "function" || !progress) {
+    return;
+  }
+
+  onProgress(progress);
+}
+
+function attachProgressReader(stream, onProgress) {
+  const reader = readline.createInterface({
+    crlfDelay: Infinity,
+    input: stream
+  });
+
+  reader.on("line", (line) => {
+    emitProgress(onProgress, parseProgressLine(line));
+  });
+
+  return reader;
+}
+
+function runYtDlp(args, onProgress) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
@@ -130,6 +153,10 @@ function runYtDlp(args) {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"]
     });
+    const readers = [
+      attachProgressReader(child.stdout, onProgress),
+      attachProgressReader(child.stderr, onProgress)
+    ];
 
     child.stdout.on("data", (chunk) => {
       stdout = truncateOutput(stdout, chunk);
@@ -140,6 +167,10 @@ function runYtDlp(args) {
     });
 
     child.on("error", (error) => {
+      readers.forEach((reader) => {
+        reader.close();
+      });
+
       if (error && error.code === "ENOENT") {
         reject(
           new AppError("yt-dlp is not installed or is not available on PATH.", 503)
@@ -151,6 +182,10 @@ function runYtDlp(args) {
     });
 
     child.on("close", (code) => {
+      readers.forEach((reader) => {
+        reader.close();
+      });
+
       if (code === 0) {
         resolve();
         return;
@@ -277,15 +312,30 @@ export async function validateDownloadRequest(payload, config) {
   };
 }
 
-export async function downloadMedia(settings, config, proxyUrl) {
+export async function executeDownloadJob({
+  config,
+  jobId = crypto.randomBytes(12).toString("hex"),
+  onProgress,
+  proxyUrl,
+  settings
+}) {
   await cleanupDownloads(config);
 
-  const jobId = crypto.randomBytes(12).toString("hex");
   const jobDir = path.join(config.download.downloadDir, jobId);
 
   await fs.mkdir(jobDir, { recursive: true });
+  emitProgress(onProgress, {
+    downloadedBytes: null,
+    etaSeconds: null,
+    message: "Starting download...",
+    percent: null,
+    phase: "downloading",
+    totalBytes: null
+  });
+
   await runYtDlp(
-    buildYtDlpArgs(settings.mediaUrl, settings, config, jobDir, proxyUrl)
+    buildYtDlpArgs(settings.mediaUrl, settings, config, jobDir, proxyUrl),
+    onProgress
   );
 
   const files = await collectFiles(jobDir);
@@ -298,12 +348,12 @@ export async function downloadMedia(settings, config, proxyUrl) {
   }
 
   return {
-    jobId,
     files: files.map((file) => ({
       name: file.name,
       size: file.size,
       url: `/api/downloads/${jobId}/${encodeURIComponent(file.name)}`
-    }))
+    })),
+    jobId
   };
 }
 

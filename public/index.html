@@ -59,6 +59,27 @@
 
         <p class="status" id="statusMessage" aria-live="polite" hidden></p>
 
+        <section class="progress-card" id="progressCard" hidden>
+          <div class="progress-head">
+            <div class="progress-copy">
+              <p class="progress-phase mono" id="progressPhase">queued</p>
+              <p class="progress-message" id="progressMessage">Waiting to start...</p>
+            </div>
+            <p class="progress-percent mono" id="progressPercent">0%</p>
+          </div>
+
+          <div
+            class="progress-track"
+            id="progressTrack"
+            role="progressbar"
+            aria-label="Download progress"
+            aria-valuemin="0"
+            aria-valuemax="100"
+          >
+            <span class="progress-meter" id="progressMeter"></span>
+          </div>
+        </section>
+
         <section class="results" id="results" hidden>
           <div class="results-head">
             <span class="field-label mono">ready files</span>
