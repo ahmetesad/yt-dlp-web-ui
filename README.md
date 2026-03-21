@@ -45,6 +45,7 @@ Set either max value to `0` to keep that limiter disabled.
 ## Notes
 
 - The server only accepts explicit JSON fields and only invokes `yt-dlp` with fixed argument lists.
+- Outbound `yt-dlp` traffic is forced through a local filtering proxy so redirects and follow-up requests cannot hop into private or loopback addresses.
 - Only `http` and `https` URLs are accepted.
 - Private, loopback, and local-only hosts are rejected.
 - Download settings are saved in `localStorage`.

@@ -119,6 +119,16 @@ export function getSessionToken(request, config) {
   return "";
 }
 
+export function getValidatedSessionToken(request, config) {
+  const token = getSessionToken(request, config);
+
+  if (!verifySessionToken(token, config)) {
+    return "";
+  }
+
+  return token;
+}
+
 export function buildSessionCookie(token, maxAgeSeconds, config) {
   const parts = [
     `${config.auth.cookieName}=${token}`,

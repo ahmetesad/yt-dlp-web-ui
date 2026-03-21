@@ -413,9 +413,7 @@ function renderResults(files = []) {
       <span>Save</span>
     `;
     action.addEventListener("click", () => {
-      downloadFile(file).catch((error) => {
-        setStatus(error.message, "error");
-      });
+      triggerBrowserDownload(file);
     });
 
     copy.append(name, meta);
@@ -424,37 +422,15 @@ function renderResults(files = []) {
   }
 }
 
-async function downloadFile(file) {
-  const response = await fetch(file.url, {
-    credentials: "same-origin",
-    headers: getAuthHeaders()
-  });
-
-  if (!response.ok) {
-    let message = `Download failed (${response.status})`;
-
-    try {
-      const payload = await response.json();
-      message = payload.error || message;
-    } catch {
-      return Promise.reject(new Error(message));
-    }
-
-    throw new Error(message);
-  }
-
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
+function triggerBrowserDownload(file) {
   const link = document.createElement("a");
 
-  link.href = objectUrl;
+  link.href = file.url;
   link.download = file.name;
+  link.rel = "noopener";
   document.body.append(link);
   link.click();
   link.remove();
-  window.setTimeout(() => {
-    URL.revokeObjectURL(objectUrl);
-  }, 1000);
 }
 
 async function bootstrap() {
@@ -554,7 +530,7 @@ elements.downloadForm.addEventListener("submit", async (event) => {
     renderResults(payload.files);
 
     if (payload.files.length === 1) {
-      await downloadFile(payload.files[0]);
+      triggerBrowserDownload(payload.files[0]);
       setStatus("File is ready.", "success");
     } else {
       setStatus(`${payload.files.length} files are ready.`, "success");

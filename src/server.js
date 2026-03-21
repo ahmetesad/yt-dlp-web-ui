@@ -6,9 +6,8 @@ import {
   buildLogoutCookie,
   buildSessionCookie,
   createSessionToken,
-  getSessionToken,
-  passwordMatches,
-  verifySessionToken
+  getValidatedSessionToken,
+  passwordMatches
 } from "./auth.js";
 import { loadConfig } from "./config.js";
 import {
@@ -20,8 +19,10 @@ import {
   validateDownloadRequest
 } from "./download.js";
 import { AppError } from "./errors.js";
+import { createSafeProxyServer } from "./proxy.js";
 
 const config = loadConfig();
+const safeProxy = await createSafeProxyServer();
 const staticMimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
@@ -132,9 +133,9 @@ function ensureAuthenticated(request) {
     return;
   }
 
-  const token = getSessionToken(request, config);
+  const token = getValidatedSessionToken(request, config);
 
-  if (!verifySessionToken(token, config)) {
+  if (!token) {
     throw new AppError("Password required.", 401);
   }
 }
@@ -144,7 +145,7 @@ function getAuthState(request) {
     return true;
   }
 
-  return verifySessionToken(getSessionToken(request, config), config);
+  return Boolean(getValidatedSessionToken(request, config));
 }
 
 async function readJsonBody(request) {
@@ -303,11 +304,28 @@ function handleLogout(response) {
 }
 
 function handleBootstrap(request, response) {
-  sendJson(response, 200, {
-    authRequired: config.auth.requirePassword,
-    authenticated: getAuthState(request),
-    client: getClientOptions(config)
-  });
+  const token = getValidatedSessionToken(request, config);
+  const extraHeaders =
+    config.auth.requirePassword && token
+      ? {
+          "Set-Cookie": buildSessionCookie(
+            token,
+            config.auth.sessionDays * 24 * 60 * 60,
+            config
+          )
+        }
+      : {};
+
+  sendJson(
+    response,
+    200,
+    {
+      authRequired: config.auth.requirePassword,
+      authenticated: getAuthState(request),
+      client: getClientOptions(config)
+    },
+    extraHeaders
+  );
 }
 
 async function handleDownloadRequest(request, response) {
@@ -319,7 +337,7 @@ async function handleDownloadRequest(request, response) {
 
   const body = await readJsonBody(request);
   const settings = await validateDownloadRequest(body, config);
-  const result = await downloadMedia(settings, config);
+  const result = await downloadMedia(settings, config, safeProxy.url);
 
   sendJson(response, 200, {
     ok: true,
@@ -404,6 +422,10 @@ const server = http.createServer((request, response) => {
 server.on("error", (error) => {
   console.error(error.message);
   process.exitCode = 1;
+});
+
+process.on("exit", () => {
+  safeProxy.close();
 });
 
 server.listen(config.server.port, config.server.host, () => {

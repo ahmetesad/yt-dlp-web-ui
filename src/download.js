@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
-import dns from "node:dns/promises";
 import fs from "node:fs/promises";
-import net from "node:net";
 import path from "node:path";
 import { AppError } from "./errors.js";
+import { validatePublicHttpUrl } from "./network.js";
 
 const videoFormats = ["mp4", "webm"];
 const audioFormats = ["mp3", "m4a", "wav"];
@@ -19,7 +18,6 @@ const qualityOptions = [
   "240",
   "worst"
 ];
-const controlCharacterPattern = /[\u0000-\u001f\u007f]/;
 
 function expectBoolean(value, label) {
   if (typeof value !== "boolean") {
@@ -35,141 +33,6 @@ function expectChoice(value, label, choices) {
   }
 
   return value;
-}
-
-function isPrivateIpv4(address) {
-  const parts = address.split(".").map((value) => Number(value));
-
-  if (parts.length !== 4 || parts.some((value) => !Number.isInteger(value))) {
-    return true;
-  }
-
-  const [a, b] = parts;
-
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    a >= 224 ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19))
-  );
-}
-
-function isPrivateIpv6(address) {
-  const normalized = address.toLowerCase();
-
-  if (normalized === "::" || normalized === "::1") {
-    return true;
-  }
-
-  if (normalized.startsWith("::ffff:")) {
-    return isPrivateAddress(normalized.slice(7));
-  }
-
-  return (
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    normalized.startsWith("fe8") ||
-    normalized.startsWith("fe9") ||
-    normalized.startsWith("fea") ||
-    normalized.startsWith("feb")
-  );
-}
-
-function isPrivateAddress(address) {
-  const version = net.isIP(address);
-
-  if (version === 4) {
-    return isPrivateIpv4(address);
-  }
-
-  if (version === 6) {
-    return isPrivateIpv6(address);
-  }
-
-  return true;
-}
-
-async function validatePublicUrl(rawUrl, config) {
-  if (typeof rawUrl !== "string") {
-    throw new AppError("mediaUrl must be a string.", 400);
-  }
-
-  const trimmedUrl = rawUrl.trim();
-
-  if (!trimmedUrl) {
-    throw new AppError("Paste a URL first.", 400);
-  }
-
-  if (trimmedUrl.length > config.download.maxUrlLength) {
-    throw new AppError("That URL is too long.", 400);
-  }
-
-  if (controlCharacterPattern.test(trimmedUrl) || /\s/.test(trimmedUrl)) {
-    throw new AppError("The URL contains invalid characters.", 400);
-  }
-
-  let parsedUrl;
-
-  try {
-    parsedUrl = new URL(trimmedUrl);
-  } catch {
-    throw new AppError("That is not a valid URL.", 400);
-  }
-
-  if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-    throw new AppError("Only http and https URLs are allowed.", 400);
-  }
-
-  if (parsedUrl.username || parsedUrl.password) {
-    throw new AppError("Embedded URL credentials are not allowed.", 400);
-  }
-
-  const hostname = parsedUrl.hostname.toLowerCase();
-
-  if (!hostname || (!hostname.includes(".") && !net.isIP(hostname))) {
-    throw new AppError("The hostname is not allowed.", 400);
-  }
-
-  if (
-    hostname === "localhost" ||
-    hostname.endsWith(".local") ||
-    hostname.endsWith(".internal")
-  ) {
-    throw new AppError("That hostname is not allowed.", 400);
-  }
-
-  if (net.isIP(hostname) && isPrivateAddress(hostname)) {
-    throw new AppError("Private or loopback addresses are not allowed.", 400);
-  }
-
-  if (!net.isIP(hostname)) {
-    try {
-      const addresses = await dns.lookup(hostname, {
-        all: true,
-        verbatim: true
-      });
-
-      if (
-        addresses.length > 0 &&
-        addresses.every((entry) => isPrivateAddress(entry.address))
-      ) {
-        throw new AppError("Private or loopback addresses are not allowed.", 400);
-      }
-    } catch (error) {
-      if (error instanceof AppError) {
-        throw error;
-      }
-
-      throw new AppError("Could not resolve that hostname.", 400);
-    }
-  }
-
-  return parsedUrl.toString();
 }
 
 function buildVideoSelector(format, quality) {
@@ -194,7 +57,7 @@ function buildVideoSelector(format, quality) {
   ].join("/");
 }
 
-function buildYtDlpArgs(url, settings, config, jobDir) {
+function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
   const args = [
     "--no-config-locations",
     "--no-warnings",
@@ -210,6 +73,10 @@ function buildYtDlpArgs(url, settings, config, jobDir) {
     "-o",
     "%(title).120B_[%(id)s].%(ext)s"
   ];
+
+  if (proxyUrl) {
+    args.push("--proxy", proxyUrl);
+  }
 
   if (settings.includePlaylist) {
     args.push(
@@ -368,7 +235,10 @@ export async function validateDownloadRequest(payload, config) {
     throw new AppError("Request body must be a JSON object.", 400);
   }
 
-  const mediaUrl = await validatePublicUrl(payload.mediaUrl, config);
+  const mediaUrl = await validatePublicHttpUrl(
+    payload.mediaUrl,
+    config.download.maxUrlLength
+  );
   const audioOnly =
     payload.audioOnly === undefined
       ? config.download.defaultAudioOnly
@@ -407,14 +277,16 @@ export async function validateDownloadRequest(payload, config) {
   };
 }
 
-export async function downloadMedia(settings, config) {
+export async function downloadMedia(settings, config, proxyUrl) {
   await cleanupDownloads(config);
 
   const jobId = crypto.randomBytes(12).toString("hex");
   const jobDir = path.join(config.download.downloadDir, jobId);
 
   await fs.mkdir(jobDir, { recursive: true });
-  await runYtDlp(buildYtDlpArgs(settings.mediaUrl, settings, config, jobDir));
+  await runYtDlp(
+    buildYtDlpArgs(settings.mediaUrl, settings, config, jobDir, proxyUrl)
+  );
 
   const files = await collectFiles(jobDir);
 
@@ -451,7 +323,7 @@ export async function resolveDownloadFile(jobId, encodedFileName, config) {
   if (
     !fileName ||
     fileName !== path.basename(fileName) ||
-    controlCharacterPattern.test(fileName)
+    /[\u0000-\u001f\u007f]/.test(fileName)
   ) {
     throw new AppError("That file name is invalid.", 400);
   }
