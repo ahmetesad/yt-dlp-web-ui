@@ -96,6 +96,7 @@ export function loadConfig() {
   const env = readEnvFile(envPath);
 
   const server = expectObject(config.server, "config.server");
+  const rateLimit = expectObject(config.rateLimit, "config.rateLimit");
   const auth = expectObject(config.auth, "config.auth");
   const download = expectObject(config.download, "config.download");
 
@@ -109,6 +110,28 @@ export function loadConfig() {
         server.maxRequestBytes,
         "config.server.maxRequestBytes",
         1024
+      )
+    },
+    rateLimit: {
+      loginWindowMinutes: expectInteger(
+        rateLimit.loginWindowMinutes,
+        "config.rateLimit.loginWindowMinutes",
+        1
+      ),
+      loginMaxAttempts: expectInteger(
+        rateLimit.loginMaxAttempts,
+        "config.rateLimit.loginMaxAttempts",
+        0
+      ),
+      downloadWindowMinutes: expectInteger(
+        rateLimit.downloadWindowMinutes,
+        "config.rateLimit.downloadWindowMinutes",
+        1
+      ),
+      downloadMaxRequests: expectInteger(
+        rateLimit.downloadMaxRequests,
+        "config.rateLimit.downloadMaxRequests",
+        0
       )
     },
     auth: {

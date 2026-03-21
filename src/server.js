@@ -53,6 +53,14 @@ const securityHeaders = {
 };
 
 function createRateLimiter(windowMs, limit) {
+  if (limit <= 0 || windowMs <= 0) {
+    return {
+      allow() {
+        return true;
+      }
+    };
+  }
+
   const hits = new Map();
 
   return {
@@ -74,8 +82,14 @@ function createRateLimiter(windowMs, limit) {
   };
 }
 
-const loginLimiter = createRateLimiter(15 * 60 * 1000, 10);
-const downloadLimiter = createRateLimiter(10 * 60 * 1000, 6);
+const loginLimiter = createRateLimiter(
+  config.rateLimit.loginWindowMinutes * 60 * 1000,
+  config.rateLimit.loginMaxAttempts
+);
+const downloadLimiter = createRateLimiter(
+  config.rateLimit.downloadWindowMinutes * 60 * 1000,
+  config.rateLimit.downloadMaxRequests
+);
 
 function getClientIp(request) {
   return request.socket.remoteAddress || "unknown";

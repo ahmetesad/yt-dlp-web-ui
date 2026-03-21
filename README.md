@@ -29,6 +29,19 @@ To enable it:
 
 The browser stores the session token in both a cookie and `localStorage`, so you only need to unlock once per device/session window.
 
+## Rate limiting
+
+Request throttling is disabled by default for personal use.
+
+If you want it, tune the values in [`config.json`](/Users/ahmet/Developer/ytdlp-web-ui/config.json):
+
+- `rateLimit.loginMaxAttempts`
+- `rateLimit.loginWindowMinutes`
+- `rateLimit.downloadMaxRequests`
+- `rateLimit.downloadWindowMinutes`
+
+Set either max value to `0` to keep that limiter disabled.
+
 ## Notes
 
 - The server only accepts explicit JSON fields and only invokes `yt-dlp` with fixed argument lists.
