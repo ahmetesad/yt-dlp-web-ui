@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>yt-dlp web ui</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="page-shell">
+    <section class="hero-card">
+      <div class="top-bar">
+        <div class="brand-chip mono">yt-dlp</div>
+        <button class="link-button mono" id="logoutButton" type="button" hidden>
+          forget session
+        </button>
+      </div>
+
+      <section id="authMount"></section>
+
+      <form class="download-panel" id="downloadForm" novalidate>
+        <label class="field field-url" for="mediaUrl">
+          <span class="field-label mono">video or audio url</span>
+          <input
+            id="mediaUrl"
+            name="mediaUrl"
+            type="url"
+            placeholder="https://www.youtube.com/watch?v=..."
+            autocomplete="off"
+            inputmode="url"
+          >
+        </label>
+
+        <div class="panel-grid">
+          <fieldset class="field-group">
+            <legend class="field-label mono">quality</legend>
+            <div class="choice-grid" id="qualityGroup"></div>
+          </fieldset>
+
+          <fieldset class="field-group">
+            <legend class="field-label mono">format</legend>
+            <div class="choice-grid choice-grid-tight" id="formatGroup"></div>
+          </fieldset>
+
+          <label class="toggle-card mono" for="audioOnly">
+            <input id="audioOnly" name="audioOnly" type="checkbox">
+            <span>audio only</span>
+          </label>
+
+          <label class="toggle-card mono" for="includePlaylist">
+            <input id="includePlaylist" name="includePlaylist" type="checkbox">
+            <span>allow playlist</span>
+          </label>
+        </div>
+
+        <p class="hint" id="settingsHint">
+          Settings stay on this device until you reset them.
+        </p>
+
+        <p class="status" id="statusMessage" aria-live="polite" hidden></p>
+
+        <section class="results" id="results" hidden>
+          <div class="results-head">
+            <span class="field-label mono">ready files</span>
+          </div>
+          <div class="results-list" id="resultsList"></div>
+        </section>
+
+        <div class="action-row action-row-end">
+          <button class="action action-muted" id="resetSettingsBtn" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 1-2.34-5.66"></path>
+              <path d="M20 4v7h-7"></path>
+            </svg>
+            <span>Reset defaults</span>
+          </button>
+          <button class="action" id="downloadButton" type="submit">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v10"></path>
+              <path d="m8 10 4 4 4-4"></path>
+              <path d="M5 19h14"></path>
+            </svg>
+            <span>Download</span>
+          </button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

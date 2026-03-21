@@ -1,0 +1,22 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "maxRequestBytes": 24576
+  },
+  "auth": {
+    "requirePassword": false,
+    "secureCookies": false,
+    "sessionDays": 30
+  },
+  "download": {
+    "downloadDir": "./downloads",
+    "cleanupAfterHours": 6,
+    "maxPlaylistItems": 25,
+    "maxUrlLength": 2048,
+    "defaultAudioOnly": false,
+    "defaultFormat": "mp4",
+    "defaultQuality": "1080",
+    "defaultIncludePlaylist": false
+  }
+}
