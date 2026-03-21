@@ -9,6 +9,7 @@ import { buildProgressArgs, parseProgressLine } from "./progress.js";
 
 const videoFormats = ["mp4", "webm"];
 const audioFormats = ["mp3", "m4a", "wav"];
+const remuxVideoOptions = ["none", "mp4"];
 const qualityOptions = [
   "best",
   "2160",
@@ -105,6 +106,10 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
       "--merge-output-format",
       settings.format
     );
+
+    if (settings.remuxVideo !== "none") {
+      args.push("--remux-video", settings.remuxVideo);
+    }
   }
 
   args.push("--", url);
@@ -255,12 +260,14 @@ export function getClientOptions(config) {
       audioOnly: config.download.defaultAudioOnly,
       format: config.download.defaultFormat,
       quality: config.download.defaultQuality,
-      includePlaylist: config.download.defaultIncludePlaylist
+      includePlaylist: config.download.defaultIncludePlaylist,
+      remuxVideo: config.download.defaultRemuxVideo
     },
     formats: {
       audio: [...audioFormats],
       video: [...videoFormats]
     },
+    remuxVideoOptions: [...remuxVideoOptions],
     qualities: [...qualityOptions]
   };
 }
@@ -286,11 +293,17 @@ export async function validateDownloadRequest(payload, config) {
     payload.quality === undefined
       ? config.download.defaultQuality
       : expectChoice(payload.quality, "quality", qualityOptions);
+  const requestedRemuxVideo =
+    payload.remuxVideo === undefined
+      ? config.download.defaultRemuxVideo
+      : expectChoice(payload.remuxVideo, "remuxVideo", remuxVideoOptions);
   const allowedFormats = audioOnly ? audioFormats : videoFormats;
   const format =
     payload.format === undefined
       ? config.download.defaultFormat
       : expectChoice(payload.format, "format", allowedFormats);
+  const remuxVideo =
+    !audioOnly && format === "mp4" ? requestedRemuxVideo : "none";
 
   if (audioOnly && videoFormats.includes(format)) {
     throw new AppError(
@@ -303,12 +316,21 @@ export async function validateDownloadRequest(payload, config) {
     throw new AppError("Choose a video format when downloading video.", 400);
   }
 
+  if (audioOnly && requestedRemuxVideo !== "none") {
+    throw new AppError("Remuxing is only available for video downloads.", 400);
+  }
+
+  if (!audioOnly && format !== "mp4" && requestedRemuxVideo !== "none") {
+    throw new AppError("Remuxing is only available for mp4 video downloads.", 400);
+  }
+
   return {
     mediaUrl,
     audioOnly,
     includePlaylist,
     format,
-    quality
+    quality,
+    remuxVideo
   };
 }
 

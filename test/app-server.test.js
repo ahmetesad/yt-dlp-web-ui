@@ -33,6 +33,7 @@ function createTestConfig(downloadDir, overrides = {}) {
       defaultAudioOnly: false,
       defaultFormat: "mp4",
       defaultIncludePlaylist: false,
+      defaultRemuxVideo: "none",
       defaultQuality: "1080",
       downloadDir,
       maxPlaylistItems: 25,

@@ -21,6 +21,10 @@ const labelMap = {
     mp3: "mp3",
     m4a: "m4a",
     wav: "wav"
+  },
+  remuxVideo: {
+    none: "off",
+    mp4: "mp4 for iPhone/iPad"
   }
 };
 
@@ -40,6 +44,8 @@ const elements = {
   progressPhase: document.querySelector("#progressPhase"),
   progressTrack: document.querySelector("#progressTrack"),
   qualityGroup: document.querySelector("#qualityGroup"),
+  remuxField: document.querySelector("#remuxField"),
+  remuxGroup: document.querySelector("#remuxGroup"),
   resetSettingsBtn: document.querySelector("#resetSettingsBtn"),
   results: document.querySelector("#results"),
   resultsList: document.querySelector("#resultsList"),
@@ -121,6 +127,10 @@ function getAvailableFormats(audioOnly) {
   return audioOnly ? state.client.formats.audio : state.client.formats.video;
 }
 
+function supportsRemux(settings = state.settings) {
+  return Boolean(settings) && !settings.audioOnly && settings.format === "mp4";
+}
+
 function getAuthElements() {
   return {
     authButton: document.querySelector("#authButton"),
@@ -157,12 +167,22 @@ function normalizeSettings(candidate = {}) {
   const format = allowedFormats.includes(candidate.format)
     ? candidate.format
     : defaultFormat;
+  const remuxOptions = Array.isArray(state.client.remuxVideoOptions)
+    ? state.client.remuxVideoOptions
+    : ["none"];
+  const defaultRemuxVideo = remuxOptions.includes(defaults.remuxVideo)
+    ? defaults.remuxVideo
+    : "none";
+  const remuxVideo = remuxOptions.includes(candidate.remuxVideo)
+    ? candidate.remuxVideo
+    : defaultRemuxVideo;
 
   return {
     audioOnly,
     format,
     includePlaylist,
-    quality
+    quality,
+    remuxVideo
   };
 }
 
@@ -278,6 +298,19 @@ function syncForm() {
     state.settings.format,
     "format"
   );
+
+  if (supportsRemux(state.settings)) {
+    elements.remuxField.hidden = false;
+    renderChoiceGroup(
+      elements.remuxGroup,
+      state.client.remuxVideoOptions,
+      state.settings.remuxVideo,
+      "remuxVideo"
+    );
+  } else {
+    elements.remuxField.hidden = true;
+    elements.remuxGroup.replaceChildren();
+  }
 }
 
 function setBusy(isBusy) {
@@ -790,7 +823,8 @@ elements.downloadForm.addEventListener("submit", async (event) => {
       },
       body: JSON.stringify({
         mediaUrl,
-        ...state.settings
+        ...state.settings,
+        remuxVideo: supportsRemux(state.settings) ? state.settings.remuxVideo : "none"
       })
     });
 

@@ -89,6 +89,14 @@ function expectString(value, label) {
   return value;
 }
 
+function expectChoice(value, label, choices) {
+  if (typeof value !== "string" || !choices.includes(value)) {
+    throw new Error(`${label} must be one of: ${choices.join(", ")}`);
+  }
+
+  return value;
+}
+
 export function loadConfig() {
   const configPath = path.join(rootDir, "config.json");
   const envPath = path.join(rootDir, ".env");
@@ -175,6 +183,11 @@ export function loadConfig() {
       defaultFormat: expectString(
         download.defaultFormat,
         "config.download.defaultFormat"
+      ),
+      defaultRemuxVideo: expectChoice(
+        download.defaultRemuxVideo,
+        "config.download.defaultRemuxVideo",
+        ["none", "mp4"]
       ),
       defaultQuality: expectString(
         download.defaultQuality,

@@ -22,6 +22,7 @@
     "maxUrlLength": 2048,
     "defaultAudioOnly": false,
     "defaultFormat": "mp4",
+    "defaultRemuxVideo": "none",
     "defaultQuality": "1080",
     "defaultIncludePlaylist": false
   }
