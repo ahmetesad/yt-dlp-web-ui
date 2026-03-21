@@ -2,6 +2,8 @@
 
 Minimal single-page yt-dlp UI built with native Node.js APIs only. Uses 0 external dependencies.
 
+<img src="./screenshots/ytdlpwebui.png">
+
 ## Requirements
 
 - Node.js 18+
