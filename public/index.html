@@ -50,15 +50,23 @@
             <div class="choice-grid choice-grid-tight" id="remuxGroup"></div>
           </fieldset>
 
-          <label class="toggle-card mono" for="audioOnly">
-            <input id="audioOnly" name="audioOnly" type="checkbox">
-            <span>audio only</span>
-          </label>
+          <div class="toggle-pair">
+            <label class="toggle-card toggle-card-compact mono" for="audioOnly">
+              <input id="audioOnly" name="audioOnly" type="checkbox">
+              <span class="toggle-text">
+                <span>audio</span>
+                <span>only</span>
+              </span>
+            </label>
 
-          <label class="toggle-card mono" for="includePlaylist">
-            <input id="includePlaylist" name="includePlaylist" type="checkbox">
-            <span>allow playlist</span>
-          </label>
+            <label class="toggle-card toggle-card-compact mono" for="includePlaylist">
+              <input id="includePlaylist" name="includePlaylist" type="checkbox">
+              <span class="toggle-text">
+                <span>allow</span>
+                <span>playlist</span>
+              </span>
+            </label>
+          </div>
         </div>
 
         <p class="hint" id="settingsHint">
