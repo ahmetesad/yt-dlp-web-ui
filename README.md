@@ -1,6 +1,6 @@
 # yt-dlp web ui
 
-Minimal single-page yt-dlp UI built with native Node.js APIs only.
+Minimal single-page yt-dlp UI built with native Node.js APIs only. Uses 0 external dependencies.
 
 ## Requirements
 
