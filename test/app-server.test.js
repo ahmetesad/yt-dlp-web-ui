@@ -69,6 +69,7 @@ async function startServer(t, options = {}) {
   const app = createAppServer({
     config,
     downloadExecutor: options.downloadExecutor,
+    streamResolver: options.streamResolver,
     jobTtlMs: options.jobTtlMs
   });
 
@@ -516,4 +517,38 @@ test("auth-protected snapshot, events, and downloads require a valid cookie", as
   assert.equal(allowedDownload.status, 200);
   assert.equal(allowedDownloadBody, "hello");
   assert.equal(allowedStream.response.statusCode, 200);
+});
+
+test("POST /api/stream-link returns direct stream URLs", async (t) => {
+  const app = await startServer(t, {
+    streamResolver: async () => ({
+      links: [
+        {
+          name: "video stream",
+          url: "https://cdn.example.com/video"
+        },
+        {
+          name: "audio stream",
+          url: "https://cdn.example.com/audio"
+        }
+      ]
+    })
+  });
+
+  const response = await requestJson(app.baseUrl, "/api/stream-link", {
+    body: JSON.stringify({
+      format: "mp4",
+      mediaUrl: "https://1.1.1.1/watch?v=test",
+      quality: "1080"
+    }),
+    headers: {
+      "Content-Type": "application/json"
+    },
+    method: "POST"
+  });
+
+  assert.equal(response.response.status, 200);
+  assert.equal(response.payload.links.length, 2);
+  assert.equal(response.payload.links[0].name, "video stream");
+  assert.equal(response.payload.links[1].url, "https://cdn.example.com/audio");
 });

@@ -35,6 +35,7 @@ const elements = {
   downloadButton: document.querySelector("#downloadButton"),
   downloadForm: document.querySelector("#downloadForm"),
   formatGroup: document.querySelector("#formatGroup"),
+  getLinkButton: document.querySelector("#getLinkButton"),
   includePlaylist: document.querySelector("#includePlaylist"),
   logoutButton: document.querySelector("#logoutButton"),
   mediaUrl: document.querySelector("#mediaUrl"),
@@ -48,6 +49,7 @@ const elements = {
   remuxGroup: document.querySelector("#remuxGroup"),
   resetSettingsBtn: document.querySelector("#resetSettingsBtn"),
   results: document.querySelector("#results"),
+  resultsLabel: document.querySelector("#resultsLabel"),
   resultsList: document.querySelector("#resultsList"),
   statusMessage: document.querySelector("#statusMessage")
 };
@@ -343,6 +345,7 @@ function setBusy(isBusy) {
   elements.audioOnly.disabled = isBusy;
   elements.downloadButton.disabled = isBusy;
   elements.includePlaylist.disabled = isBusy;
+  elements.getLinkButton.disabled = isBusy;
   elements.logoutButton.disabled = isBusy;
   elements.mediaUrl.disabled = isBusy;
   elements.resetSettingsBtn.disabled = isBusy;
@@ -537,7 +540,14 @@ function updateAuthVisibility() {
   setBusy(state.busy);
 }
 
-function renderResults(files = []) {
+function clearResults(title = "results") {
+  elements.resultsLabel.textContent = title;
+  elements.resultsList.replaceChildren();
+  elements.results.hidden = true;
+}
+
+function renderFileResults(files = []) {
+  elements.resultsLabel.textContent = "ready files";
   elements.resultsList.replaceChildren();
   elements.results.hidden = files.length === 0;
 
@@ -577,6 +587,88 @@ function renderResults(files = []) {
   }
 }
 
+async function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "absolute";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function renderLinkResults(links = []) {
+  elements.resultsLabel.textContent = "stream links";
+  elements.resultsList.replaceChildren();
+  elements.results.hidden = links.length === 0;
+
+  for (const link of links) {
+    const row = document.createElement("div");
+    row.className = "results-row";
+
+    const copy = document.createElement("div");
+    copy.className = "result-copy";
+
+    const name = document.createElement("p");
+    name.className = "result-name";
+    name.textContent = link.name;
+
+    const meta = document.createElement("p");
+    meta.className = "result-meta";
+    meta.textContent = link.url;
+
+    const actions = document.createElement("div");
+    actions.className = "result-actions";
+
+    const copyButton = document.createElement("button");
+    copyButton.type = "button";
+    copyButton.className = "action";
+    copyButton.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="9" y="9" width="10" height="10" rx="2"></rect>
+        <path d="M15 9V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"></path>
+      </svg>
+      <span>Copy</span>
+    `;
+    copyButton.addEventListener("click", async () => {
+      try {
+        await copyToClipboard(link.url);
+        setStatus("Link copied.", "success");
+      } catch {
+        setStatus("Could not copy the link.", "error");
+      }
+    });
+
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.className = "action action-muted";
+    openButton.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M14 5h5v5"></path>
+        <path d="M10 14 19 5"></path>
+        <path d="M19 13v4a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4"></path>
+      </svg>
+      <span>Open</span>
+    `;
+    openButton.addEventListener("click", () => {
+      window.open(link.url, "_blank", "noopener,noreferrer");
+    });
+
+    actions.append(copyButton, openButton);
+    copy.append(name, meta);
+    row.append(copy, actions);
+    elements.resultsList.append(row);
+  }
+}
+
 function triggerBrowserDownload(file) {
   const link = document.createElement("a");
 
@@ -600,11 +692,33 @@ function parseEventPayload(event) {
   }
 }
 
+function getRequestPayload() {
+  if (state.authRequired && !state.authenticated) {
+    setStatus("Enter the password before continuing.", "error");
+    focusPasswordInput();
+    return null;
+  }
+
+  const mediaUrl = elements.mediaUrl.value.trim();
+
+  if (!mediaUrl) {
+    setStatus("Paste a URL first.", "error");
+    elements.mediaUrl.focus();
+    return null;
+  }
+
+  return {
+    mediaUrl,
+    ...state.settings,
+    remuxVideo: supportsRemux(state.settings) ? state.settings.remuxVideo : "none"
+  };
+}
+
 function completeActiveJob(files = []) {
   clearActiveJob();
   setBusy(false);
   hideProgress();
-  renderResults(files);
+  renderFileResults(files);
 
   if (files.length === 1) {
     triggerBrowserDownload(files[0]);
@@ -751,7 +865,7 @@ async function bootstrap() {
 
     syncForm();
     updateAuthVisibility();
-    renderResults();
+    clearResults();
     setStatus("");
   } catch (error) {
     setStatus(error.message, "error");
@@ -812,22 +926,14 @@ elements.downloadForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  if (state.authRequired && !state.authenticated) {
-    setStatus("Enter the password before downloading.", "error");
-    focusPasswordInput();
-    return;
-  }
+  const requestPayload = getRequestPayload();
 
-  const mediaUrl = elements.mediaUrl.value.trim();
-
-  if (!mediaUrl) {
-    setStatus("Paste a URL first.", "error");
-    elements.mediaUrl.focus();
+  if (!requestPayload) {
     return;
   }
 
   setBusy(true);
-  renderResults();
+  clearResults();
   setStatus("");
   setProgressState({
     progress: {
@@ -842,19 +948,15 @@ elements.downloadForm.addEventListener("submit", async (event) => {
   });
 
   try {
-    const payload = await apiFetch("/api/download", {
+    const responsePayload = await apiFetch("/api/download", {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        mediaUrl,
-        ...state.settings,
-        remuxVideo: supportsRemux(state.settings) ? state.settings.remuxVideo : "none"
-      })
+      body: JSON.stringify(requestPayload)
     });
 
-    state.activeJobId = payload.jobId;
+    state.activeJobId = responsePayload.jobId;
     setProgressState({
       progress: {
         downloadedBytes: null,
@@ -864,9 +966,9 @@ elements.downloadForm.addEventListener("submit", async (event) => {
         phase: "downloading",
         totalBytes: null
       },
-      status: payload.status || "queued"
+      status: responsePayload.status || "queued"
     });
-    openJobStream(payload.jobId);
+    openJobStream(responsePayload.jobId);
   } catch (error) {
     hideProgress();
 
@@ -876,6 +978,50 @@ elements.downloadForm.addEventListener("submit", async (event) => {
     }
 
     setStatus(error.message, "error");
+    setBusy(false);
+  }
+});
+
+elements.getLinkButton.addEventListener("click", async () => {
+  if (state.busy || state.activeJobId) {
+    return;
+  }
+
+  const requestPayload = getRequestPayload();
+
+  if (!requestPayload) {
+    return;
+  }
+
+  setBusy(true);
+  hideProgress();
+  clearResults();
+  setStatus("Resolving stream links...", "info");
+
+  try {
+    const response = await apiFetch("/api/stream-link", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestPayload)
+    });
+
+    renderLinkResults(response.links || []);
+    setStatus(
+      response.links?.length === 1
+        ? "Stream link is ready."
+        : `${response.links?.length || 0} stream links are ready.`,
+      "success"
+    );
+  } catch (error) {
+    if (error.message === "Password required.") {
+      state.authenticated = false;
+      updateAuthVisibility();
+    }
+
+    setStatus(error.message, "error");
+  } finally {
     setBusy(false);
   }
 });

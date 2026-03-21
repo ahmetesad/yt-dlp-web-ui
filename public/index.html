@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>yt-dlp web ui</title>
+  <title>yt-dlp web UI</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="page-shell">
     <section class="hero-card">
       <div class="top-bar">
-        <div class="brand-chip mono">yt-dlp</div>
         <button class="link-button mono" id="logoutButton" type="button" hidden>
           forget session
         </button>
@@ -77,7 +76,7 @@
 
         <section class="results" id="results" hidden>
           <div class="results-head">
-            <span class="field-label mono">ready files</span>
+            <span class="field-label mono" id="resultsLabel">results</span>
           </div>
           <div class="results-list" id="resultsList"></div>
         </section>
@@ -103,6 +102,13 @@
               <path d="M20 4v7h-7"></path>
             </svg>
             <span>Reset defaults</span>
+          </button>
+          <button class="action action-muted" id="getLinkButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L10.6 5.33"></path>
+              <path d="M14 11a5 5 0 0 0-7.07 0L4.81 13.12a5 5 0 0 0 7.07 7.07l1.53-1.52"></path>
+            </svg>
+            <span>Get link</span>
           </button>
           <button class="action" id="downloadButton" type="submit">
             <svg viewBox="0 0 24 24" aria-hidden="true">

@@ -12,6 +12,7 @@ import {
 } from "./auth.js";
 import {
   executeDownloadJob,
+  executeStreamLinkLookup,
   getClientOptions,
   resolveDownloadFile,
   validateDownloadRequest
@@ -132,6 +133,7 @@ function requireJobId(jobId) {
 export function createAppServer({
   config,
   downloadExecutor = executeDownloadJob,
+  streamResolver = executeStreamLinkLookup,
   jobTtlMs = 60 * 60 * 1000,
   proxyUrl = ""
 }) {
@@ -404,6 +406,24 @@ export function createAppServer({
     });
   }
 
+  async function handleStreamLinkRequest(request, response) {
+    ensureAuthenticated(request);
+
+    if (!downloadLimiter.allow(getClientIp(request))) {
+      throw new AppError("Too many download requests. Try again later.", 429);
+    }
+
+    const body = await readJsonBody(request);
+    const settings = await validateDownloadRequest(body, config);
+    const payload = await streamResolver({
+      config,
+      proxyUrl,
+      settings
+    });
+
+    sendJson(response, 200, payload);
+  }
+
   function handleJobSnapshot(request, response, jobId) {
     ensureAuthenticated(request, { cookieOnly: true });
 
@@ -515,6 +535,11 @@ export function createAppServer({
 
     if (request.method === "POST" && url.pathname === "/api/download") {
       await handleDownloadRequest(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/stream-link") {
+      await handleStreamLinkRequest(request, response);
       return;
     }
 

@@ -116,6 +116,37 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
   return args;
 }
 
+function buildStreamLinkArgs(url, settings, config, proxyUrl) {
+  const args = [
+    "--no-config-locations",
+    "--no-warnings",
+    "-g"
+  ];
+
+  if (proxyUrl) {
+    args.push("--proxy", proxyUrl);
+  }
+
+  if (settings.includePlaylist) {
+    args.push(
+      "--yes-playlist",
+      "--playlist-end",
+      String(config.download.maxPlaylistItems)
+    );
+  } else {
+    args.push("--no-playlist");
+  }
+
+  if (settings.audioOnly) {
+    args.push("--format", "bestaudio/best");
+  } else {
+    args.push("--format", buildVideoSelector(settings.format, settings.quality));
+  }
+
+  args.push("--", url);
+  return args;
+}
+
 function truncateOutput(currentValue, chunk) {
   const combined = `${currentValue}${chunk.toString("utf8")}`;
   return combined.length > 8000 ? combined.slice(combined.length - 8000) : combined;
@@ -199,6 +230,71 @@ function runYtDlp(args, onProgress) {
       reject(new AppError(normalizeYtDlpMessage(stderr, stdout), 422));
     });
   });
+}
+
+function runYtDlpForLinks(args) {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const child = spawn("yt-dlp", args, {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    child.stdout.on("data", (chunk) => {
+      stdout = truncateOutput(stdout, chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr = truncateOutput(stderr, chunk);
+    });
+
+    child.on("error", (error) => {
+      if (error && error.code === "ENOENT") {
+        reject(
+          new AppError("yt-dlp is not installed or is not available on PATH.", 503)
+        );
+        return;
+      }
+
+      reject(new AppError("The server could not start yt-dlp.", 500));
+    });
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new AppError(normalizeYtDlpMessage(stderr, stdout), 422));
+        return;
+      }
+
+      const urls = stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+      if (urls.length === 0) {
+        reject(new AppError("yt-dlp did not return a stream URL.", 422));
+        return;
+      }
+
+      resolve(urls);
+    });
+  });
+}
+
+function getStreamLinkName(index, totalLinks, settings) {
+  if (settings.audioOnly) {
+    return totalLinks === 1 ? "audio stream" : `audio stream ${index + 1}`;
+  }
+
+  if (totalLinks === 1) {
+    return "stream";
+  }
+
+  if (totalLinks === 2) {
+    return index === 0 ? "video stream" : "audio stream";
+  }
+
+  return `stream ${index + 1}`;
 }
 
 async function collectFiles(jobDir) {
@@ -376,6 +472,23 @@ export async function executeDownloadJob({
       url: `/api/downloads/${jobId}/${encodeURIComponent(file.name)}`
     })),
     jobId
+  };
+}
+
+export async function executeStreamLinkLookup({
+  config,
+  proxyUrl,
+  settings
+}) {
+  const urls = await runYtDlpForLinks(
+    buildStreamLinkArgs(settings.mediaUrl, settings, config, proxyUrl)
+  );
+
+  return {
+    links: urls.map((url, index) => ({
+      name: getStreamLinkName(index, urls.length, settings),
+      url
+    }))
   };
 }
 
