@@ -347,6 +347,10 @@ label {
   justify-content: flex-end;
 }
 
+.action-row-mobile-sticky {
+  z-index: 2;
+}
+
 .action {
   display: inline-flex;
   align-items: center;
@@ -419,6 +423,18 @@ label {
     justify-content: flex-end;
   }
 
+  .action-row-mobile-sticky {
+    position: sticky;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    margin-top: 4px;
+    padding: 10px;
+    border: 1px solid var(--surface-border);
+    border-radius: 18px;
+    background: linear-gradient(180deg, var(--surface-bg-start), var(--surface-bg-end));
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+    backdrop-filter: blur(18px);
+  }
+
   .action {
     flex: 0 1 auto;
   }
@@ -432,6 +448,10 @@ label {
 
   .action-row-end {
     gap: 10px;
+  }
+
+  .action-row-mobile-sticky .action {
+    flex: 1 1 auto;
   }
 
   .action {
