@@ -35,6 +35,9 @@
           <fieldset class="field-group">
             <legend class="field-label mono">quality</legend>
             <div class="choice-grid" id="qualityGroup"></div>
+            <button class="link-button quality-toggle mono" id="qualityToggle" type="button">
+              more qualities
+            </button>
           </fieldset>
 
           <fieldset class="field-group">
@@ -64,27 +67,6 @@
 
         <p class="status" id="statusMessage" aria-live="polite" hidden></p>
 
-        <section class="progress-card" id="progressCard" hidden>
-          <div class="progress-head">
-            <div class="progress-copy">
-              <p class="progress-phase mono" id="progressPhase">queued</p>
-              <p class="progress-message" id="progressMessage">Waiting to start...</p>
-            </div>
-            <p class="progress-percent mono" id="progressPercent">0%</p>
-          </div>
-
-          <div
-            class="progress-track"
-            id="progressTrack"
-            role="progressbar"
-            aria-label="Download progress"
-            aria-valuemin="0"
-            aria-valuemax="100"
-          >
-            <span class="progress-meter" id="progressMeter"></span>
-          </div>
-        </section>
-
         <section class="results" id="results" hidden>
           <div class="results-head">
             <span class="field-label mono">ready files</span>
@@ -93,6 +75,20 @@
         </section>
 
         <div class="action-row action-row-end action-row-mobile-sticky">
+          <div class="action-progress" id="actionProgress" hidden>
+            <p class="action-progress-label mono" id="actionProgressLabel">working</p>
+            <div
+              class="action-progress-track"
+              id="actionProgressTrack"
+              role="progressbar"
+              aria-label="Download progress"
+              aria-valuemin="0"
+              aria-valuemax="100"
+            >
+              <span class="action-progress-meter" id="actionProgressMeter"></span>
+            </div>
+          </div>
+
           <button class="action action-muted" id="resetSettingsBtn" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M20 11a8 8 0 1 1-2.34-5.66"></path>

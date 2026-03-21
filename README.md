@@ -4,6 +4,14 @@ Minimal single-page yt-dlp UI built with native Node.js APIs only. Uses 0 extern
 
 <img src="./screenshots/ytdlpwebui.png">
 
+## Features
+
+- Single-page UI served by native `node:http`
+- Saved download settings in `localStorage`
+- Compact live download progress in the sticky action area
+- Optional `mp4` remux setting for video downloads to help with iPhone/iPad playback
+- Short quality picker by default, with a toggle to reveal the full list
+
 ## Requirements
 
 - Node.js 18+
@@ -51,4 +59,5 @@ Set either max value to `0` to keep that limiter disabled.
 - Only `http` and `https` URLs are accepted.
 - Private, loopback, and local-only hosts are rejected.
 - Download settings are saved in `localStorage`.
+- The `mp4` remux option changes the container only. It does not transcode unsupported codecs.
 - Old downloads are cleaned out automatically from the configured download directory.

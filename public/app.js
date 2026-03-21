@@ -2,6 +2,7 @@ const storageKeys = {
   settings: "ytdlp_web_ui_settings",
   token: "ytdlp_web_ui_session_token"
 };
+const primaryQualityValues = ["1080", "480"];
 
 const labelMap = {
   quality: {
@@ -37,13 +38,12 @@ const elements = {
   includePlaylist: document.querySelector("#includePlaylist"),
   logoutButton: document.querySelector("#logoutButton"),
   mediaUrl: document.querySelector("#mediaUrl"),
-  progressCard: document.querySelector("#progressCard"),
-  progressMessage: document.querySelector("#progressMessage"),
-  progressMeter: document.querySelector("#progressMeter"),
-  progressPercent: document.querySelector("#progressPercent"),
-  progressPhase: document.querySelector("#progressPhase"),
-  progressTrack: document.querySelector("#progressTrack"),
+  actionProgress: document.querySelector("#actionProgress"),
+  actionProgressLabel: document.querySelector("#actionProgressLabel"),
+  actionProgressMeter: document.querySelector("#actionProgressMeter"),
+  actionProgressTrack: document.querySelector("#actionProgressTrack"),
   qualityGroup: document.querySelector("#qualityGroup"),
+  qualityToggle: document.querySelector("#qualityToggle"),
   remuxField: document.querySelector("#remuxField"),
   remuxGroup: document.querySelector("#remuxGroup"),
   resetSettingsBtn: document.querySelector("#resetSettingsBtn"),
@@ -60,6 +60,7 @@ const state = {
   client: null,
   jobStream: null,
   settings: null,
+  showAllQualities: false,
   snapshotTimerId: 0
 };
 
@@ -129,6 +130,24 @@ function getAvailableFormats(audioOnly) {
 
 function supportsRemux(settings = state.settings) {
   return Boolean(settings) && !settings.audioOnly && settings.format === "mp4";
+}
+
+function getVisibleQualityValues() {
+  if (!state.client) {
+    return [];
+  }
+
+  if (state.showAllQualities) {
+    return state.client.qualities;
+  }
+
+  const visibleValues = new Set(primaryQualityValues);
+
+  if (state.settings?.quality) {
+    visibleValues.add(state.settings.quality);
+  }
+
+  return state.client.qualities.filter((value) => visibleValues.has(value));
 }
 
 function getAuthElements() {
@@ -288,10 +307,14 @@ function syncForm() {
 
   renderChoiceGroup(
     elements.qualityGroup,
-    state.client.qualities,
+    getVisibleQualityValues(),
     state.settings.quality,
     "quality"
   );
+  elements.qualityToggle.hidden = state.client.qualities.length <= primaryQualityValues.length;
+  elements.qualityToggle.textContent = state.showAllQualities
+    ? "show fewer"
+    : "more qualities";
   renderChoiceGroup(
     elements.formatGroup,
     getAvailableFormats(state.settings.audioOnly),
@@ -378,53 +401,49 @@ function setProgressState({ progress = null, status = "running" } = {}) {
     ? Math.max(0, Math.min(100, progress.percent))
     : null;
   const phaseLabel = getPhaseLabel(status, progress);
-  const message =
-    progress?.message ||
-    (status === "queued"
-      ? "Waiting to start..."
-      : phaseLabel === "processing"
-        ? "Processing media..."
-        : "Downloading media...");
 
-  elements.progressCard.hidden = false;
-  elements.progressPhase.textContent = phaseLabel;
-  elements.progressMessage.textContent = message;
-  elements.progressPercent.textContent =
+  elements.actionProgress.hidden = false;
+  elements.actionProgressLabel.textContent =
     status === "queued" && normalizedPercent === null
       ? "queued"
-      : normalizedPercent === null
-        ? "working"
-        : `${Math.round(normalizedPercent)}%`;
+      : phaseLabel === "processing"
+        ? normalizedPercent === null
+          ? "processing"
+          : `processing ${Math.round(normalizedPercent)}%`
+        : normalizedPercent === null
+          ? "starting"
+          : `${Math.round(normalizedPercent)}%`;
 
   if (normalizedPercent === null) {
-    elements.progressTrack.dataset.indeterminate = "true";
-    elements.progressTrack.removeAttribute("aria-valuenow");
-    elements.progressTrack.setAttribute("aria-valuetext", message);
-    elements.progressMeter.style.width = "";
+    elements.actionProgressTrack.dataset.indeterminate = "true";
+    elements.actionProgressTrack.removeAttribute("aria-valuenow");
+    elements.actionProgressTrack.setAttribute(
+      "aria-valuetext",
+      phaseLabel === "processing" ? "Processing media" : "Downloading media"
+    );
+    elements.actionProgressMeter.style.width = "";
     return;
   }
 
-  elements.progressTrack.dataset.indeterminate = "false";
-  elements.progressTrack.setAttribute(
+  elements.actionProgressTrack.dataset.indeterminate = "false";
+  elements.actionProgressTrack.setAttribute(
     "aria-valuenow",
     String(Math.round(normalizedPercent))
   );
-  elements.progressTrack.setAttribute(
+  elements.actionProgressTrack.setAttribute(
     "aria-valuetext",
     `${Math.round(normalizedPercent)} percent`
   );
-  elements.progressMeter.style.width = `${normalizedPercent}%`;
+  elements.actionProgressMeter.style.width = `${normalizedPercent}%`;
 }
 
 function hideProgress() {
-  elements.progressCard.hidden = true;
-  elements.progressPhase.textContent = "";
-  elements.progressMessage.textContent = "";
-  elements.progressPercent.textContent = "";
-  elements.progressTrack.dataset.indeterminate = "false";
-  elements.progressTrack.removeAttribute("aria-valuenow");
-  elements.progressTrack.removeAttribute("aria-valuetext");
-  elements.progressMeter.style.width = "0%";
+  elements.actionProgress.hidden = true;
+  elements.actionProgressLabel.textContent = "";
+  elements.actionProgressTrack.dataset.indeterminate = "false";
+  elements.actionProgressTrack.removeAttribute("aria-valuenow");
+  elements.actionProgressTrack.removeAttribute("aria-valuetext");
+  elements.actionProgressMeter.style.width = "0%";
 }
 
 function bindAuthForm() {
@@ -684,7 +703,6 @@ function openJobStream(jobId) {
       progress: payload,
       status: payload.phase === "postprocessing" ? "postprocessing" : "running"
     });
-    setStatus(payload.message || "Download in progress...", "info");
   });
 
   stream.addEventListener("complete", (event) => {
@@ -757,7 +775,13 @@ elements.includePlaylist.addEventListener("change", () => {
   saveSettings(state.settings);
 });
 
+elements.qualityToggle.addEventListener("click", () => {
+  state.showAllQualities = !state.showAllQualities;
+  syncForm();
+});
+
 elements.resetSettingsBtn.addEventListener("click", () => {
+  state.showAllQualities = false;
   state.settings = normalizeSettings(state.client.defaults);
   clearSavedSettings();
   syncForm();
@@ -802,6 +826,7 @@ elements.downloadForm.addEventListener("submit", async (event) => {
 
   setBusy(true);
   renderResults();
+  setStatus("");
   setProgressState({
     progress: {
       downloadedBytes: null,
@@ -813,7 +838,6 @@ elements.downloadForm.addEventListener("submit", async (event) => {
     },
     status: "queued"
   });
-  setStatus("Preparing download...", "info");
 
   try {
     const payload = await apiFetch("/api/download", {
@@ -840,7 +864,6 @@ elements.downloadForm.addEventListener("submit", async (event) => {
       },
       status: payload.status || "queued"
     });
-    setStatus("Download in progress...", "info");
     openJobStream(payload.jobId);
   } catch (error) {
     hideProgress();
