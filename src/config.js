@@ -166,6 +166,15 @@ export function loadConfig() {
         "config.download.cleanupAfterHours",
         1
       ),
+      deleteAfterDownload: expectBoolean(
+        download.deleteAfterDownload,
+        "config.download.deleteAfterDownload"
+      ),
+      deleteAfterDownloadMinutes: expectInteger(
+        download.deleteAfterDownloadMinutes,
+        "config.download.deleteAfterDownloadMinutes",
+        1
+      ),
       maxPlaylistItems: expectInteger(
         download.maxPlaylistItems,
         "config.download.maxPlaylistItems",
@@ -184,10 +193,10 @@ export function loadConfig() {
         download.defaultFormat,
         "config.download.defaultFormat"
       ),
-      defaultRemuxVideo: expectChoice(
-        download.defaultRemuxVideo,
-        "config.download.defaultRemuxVideo",
-        ["none", "mp4"]
+      defaultConvertVideo: expectChoice(
+        download.defaultConvertVideo,
+        "config.download.defaultConvertVideo",
+        ["none", "remux", "h264"]
       ),
       defaultQuality: expectString(
         download.defaultQuality,

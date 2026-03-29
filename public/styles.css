@@ -152,6 +152,11 @@ label {
   text-transform: lowercase;
 }
 
+.link-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .auth-panel,
 .download-panel,
 .panel-grid,

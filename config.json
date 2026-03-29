@@ -18,11 +18,13 @@
   "download": {
     "downloadDir": "./downloads",
     "cleanupAfterHours": 6,
+    "deleteAfterDownload": true,
+    "deleteAfterDownloadMinutes": 5,
     "maxPlaylistItems": 25,
     "maxUrlLength": 2048,
     "defaultAudioOnly": false,
     "defaultFormat": "mp4",
-    "defaultRemuxVideo": "none",
+    "defaultConvertVideo": "none",
     "defaultQuality": "1080",
     "defaultIncludePlaylist": false
   }
