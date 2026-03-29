@@ -30,10 +30,12 @@ function createTestConfig(downloadDir, overrides = {}) {
     },
     download: {
       cleanupAfterHours: 6,
+      deleteAfterDownload: true,
+      deleteAfterDownloadMinutes: 5,
       defaultAudioOnly: false,
+      defaultConvertVideo: "none",
       defaultFormat: "mp4",
       defaultIncludePlaylist: false,
-      defaultRemuxVideo: "none",
       defaultQuality: "1080",
       downloadDir,
       maxPlaylistItems: 25,
@@ -68,6 +70,7 @@ async function startServer(t, options = {}) {
   const config = createTestConfig(downloadDir, options.config);
   const app = createAppServer({
     config,
+    deleteAfterDownloadMs: options.deleteAfterDownloadMs,
     downloadExecutor: options.downloadExecutor,
     streamResolver: options.streamResolver,
     jobTtlMs: options.jobTtlMs
@@ -551,4 +554,54 @@ test("POST /api/stream-link returns direct stream URLs", async (t) => {
   assert.equal(response.payload.links.length, 2);
   assert.equal(response.payload.links[0].name, "video stream");
   assert.equal(response.payload.links[1].url, "https://cdn.example.com/audio");
+});
+
+test("downloaded files are deleted shortly after a real GET download", async (t) => {
+  const app = await startServer(t, {
+    deleteAfterDownloadMs: 30
+  });
+  const jobId = "b".repeat(24);
+  const jobDir = path.join(app.config.download.downloadDir, jobId);
+  const filePath = path.join(jobDir, "clip.mp4");
+
+  await fs.mkdir(jobDir, { recursive: true });
+  await fs.writeFile(filePath, "hello");
+
+  const response = await fetch(`${app.baseUrl}/api/downloads/${jobId}/clip.mp4`);
+  const body = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.equal(body, "hello");
+
+  await new Promise((resolve) => {
+    setTimeout(resolve, 80);
+  });
+
+  await assert.rejects(fs.stat(filePath));
+  await assert.rejects(fs.readdir(jobDir));
+});
+
+test("HEAD requests do not arm delete-after-download cleanup", async (t) => {
+  const app = await startServer(t, {
+    deleteAfterDownloadMs: 30
+  });
+  const jobId = "c".repeat(24);
+  const jobDir = path.join(app.config.download.downloadDir, jobId);
+  const filePath = path.join(jobDir, "clip.mp4");
+
+  await fs.mkdir(jobDir, { recursive: true });
+  await fs.writeFile(filePath, "hello");
+
+  const response = await fetch(`${app.baseUrl}/api/downloads/${jobId}/clip.mp4`, {
+    method: "HEAD"
+  });
+
+  assert.equal(response.status, 200);
+
+  await new Promise((resolve) => {
+    setTimeout(resolve, 80);
+  });
+
+  const stats = await fs.stat(filePath);
+  assert.equal(stats.isFile(), true);
 });

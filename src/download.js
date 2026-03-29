@@ -9,7 +9,8 @@ import { buildProgressArgs, parseProgressLine } from "./progress.js";
 
 const videoFormats = ["mp4", "webm"];
 const audioFormats = ["mp3", "m4a", "wav"];
-const remuxVideoOptions = ["none", "mp4"];
+const convertVideoOptions = ["none", "remux", "h264"];
+const convertibleVideoExtensions = new Set([".m4v", ".mkv", ".mov", ".mp4", ".webm"]);
 const qualityOptions = [
   "best",
   "2160",
@@ -107,9 +108,6 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
       settings.format
     );
 
-    if (settings.remuxVideo !== "none") {
-      args.push("--remux-video", settings.remuxVideo);
-    }
   }
 
   args.push("--", url);
@@ -152,12 +150,20 @@ function truncateOutput(currentValue, chunk) {
   return combined.length > 8000 ? combined.slice(combined.length - 8000) : combined;
 }
 
-function normalizeYtDlpMessage(stderr, stdout) {
-  const source = (stderr || stdout || "yt-dlp failed.").trim();
+function normalizeCommandMessage(stderr, stdout, fallback) {
+  const source = (stderr || stdout || fallback).trim();
   const firstLine =
-    source.split(/\r?\n/).find((line) => line.trim()) || "yt-dlp failed.";
+    source.split(/\r?\n/).find((line) => line.trim()) || fallback;
 
   return firstLine.slice(0, 240);
+}
+
+function normalizeYtDlpMessage(stderr, stdout) {
+  return normalizeCommandMessage(stderr, stdout, "yt-dlp failed.");
+}
+
+function normalizeFfmpegMessage(stderr, stdout) {
+  return normalizeCommandMessage(stderr, stdout, "ffmpeg failed.");
 }
 
 function emitProgress(onProgress, progress) {
@@ -166,6 +172,70 @@ function emitProgress(onProgress, progress) {
   }
 
   onProgress(progress);
+}
+
+function isVideoFile(fileName) {
+  return convertibleVideoExtensions.has(path.extname(fileName).toLowerCase());
+}
+
+function getConvertedFileName(fileName, mode) {
+  const extension = path.extname(fileName);
+  const baseName = extension ? fileName.slice(0, -extension.length) : fileName;
+  return mode === "remux" ? `${baseName}_mp4.mp4` : `${baseName}_h264.mp4`;
+}
+
+function buildFfmpegArgs(inputPath, outputPath, mode) {
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-nostdin",
+    "-y",
+    "-i",
+    inputPath,
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a?"
+  ];
+
+  if (mode === "remux") {
+    return [
+      ...args,
+      "-c:v",
+      "copy",
+      "-c:a",
+      "copy",
+      "-movflags",
+      "+faststart",
+      outputPath
+    ];
+  }
+
+  if (mode === "h264") {
+    return [
+      ...args,
+      "-vf",
+      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "veryfast",
+      "-crf",
+      "23",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-movflags",
+      "+faststart",
+      outputPath
+    ];
+  }
+
+  throw new AppError("convertVideo is not allowed.", 400);
 }
 
 function attachProgressReader(stream, onProgress) {
@@ -281,6 +351,74 @@ function runYtDlpForLinks(args) {
   });
 }
 
+function ensureFfmpegAvailable() {
+  return new Promise((resolve, reject) => {
+    const child = spawn("ffmpeg", ["-version"], {
+      shell: false,
+      stdio: "ignore"
+    });
+
+    child.on("error", (error) => {
+      if (error && error.code === "ENOENT") {
+        reject(
+          new AppError("ffmpeg is not installed or is not available on PATH.", 503)
+        );
+        return;
+      }
+
+      reject(new AppError("The server could not start ffmpeg.", 500));
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new AppError("ffmpeg is installed but could not be started.", 503));
+    });
+  });
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    const child = spawn("ffmpeg", args, {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    child.stdout.on("data", (chunk) => {
+      stdout = truncateOutput(stdout, chunk);
+    });
+
+    child.stderr.on("data", (chunk) => {
+      stderr = truncateOutput(stderr, chunk);
+    });
+
+    child.on("error", (error) => {
+      if (error && error.code === "ENOENT") {
+        reject(
+          new AppError("ffmpeg is not installed or is not available on PATH.", 503)
+        );
+        return;
+      }
+
+      reject(new AppError("The server could not start ffmpeg.", 500));
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new AppError(normalizeFfmpegMessage(stderr, stdout), 422));
+    });
+  });
+}
+
 function getStreamLinkName(index, totalLinks, settings) {
   if (settings.audioOnly) {
     return totalLinks === 1 ? "audio stream" : `audio stream ${index + 1}`;
@@ -323,6 +461,43 @@ async function collectFiles(jobDir) {
   return files;
 }
 
+async function applyVideoConversion(jobDir, settings, onProgress) {
+  if (settings.audioOnly || settings.convertVideo === "none") {
+    return;
+  }
+
+  const files = await collectFiles(jobDir);
+  const videoFiles = files.filter((file) => isVideoFile(file.name));
+
+  if (videoFiles.length === 0) {
+    throw new AppError(
+      "yt-dlp finished, but no video file was available for conversion.",
+      500
+    );
+  }
+
+  for (const [index, file] of videoFiles.entries()) {
+    emitProgress(onProgress, {
+      downloadedBytes: null,
+      etaSeconds: null,
+      message:
+        settings.convertVideo === "remux"
+          ? `Remuxing ${index + 1}/${videoFiles.length}...`
+          : `Encoding ${index + 1}/${videoFiles.length}...`,
+      percent: null,
+      phase: "postprocessing",
+      totalBytes: null
+    });
+
+    const inputPath = path.join(jobDir, file.name);
+    const outputName = getConvertedFileName(file.name, settings.convertVideo);
+    const outputPath = path.join(jobDir, outputName);
+
+    await runFfmpeg(buildFfmpegArgs(inputPath, outputPath, settings.convertVideo));
+    await fs.rm(inputPath, { force: true });
+  }
+}
+
 export async function ensureDownloadDir(config) {
   await fs.mkdir(config.download.downloadDir, { recursive: true });
 }
@@ -357,13 +532,13 @@ export function getClientOptions(config) {
       format: config.download.defaultFormat,
       quality: config.download.defaultQuality,
       includePlaylist: config.download.defaultIncludePlaylist,
-      remuxVideo: config.download.defaultRemuxVideo
+      convertVideo: config.download.defaultConvertVideo
     },
     formats: {
       audio: [...audioFormats],
       video: [...videoFormats]
     },
-    remuxVideoOptions: [...remuxVideoOptions],
+    convertVideoOptions: [...convertVideoOptions],
     qualities: [...qualityOptions]
   };
 }
@@ -389,17 +564,16 @@ export async function validateDownloadRequest(payload, config) {
     payload.quality === undefined
       ? config.download.defaultQuality
       : expectChoice(payload.quality, "quality", qualityOptions);
-  const requestedRemuxVideo =
-    payload.remuxVideo === undefined
-      ? config.download.defaultRemuxVideo
-      : expectChoice(payload.remuxVideo, "remuxVideo", remuxVideoOptions);
+  const requestedConvertVideo =
+    payload.convertVideo === undefined
+      ? config.download.defaultConvertVideo
+      : expectChoice(payload.convertVideo, "convertVideo", convertVideoOptions);
   const allowedFormats = audioOnly ? audioFormats : videoFormats;
   const format =
     payload.format === undefined
       ? config.download.defaultFormat
       : expectChoice(payload.format, "format", allowedFormats);
-  const remuxVideo =
-    !audioOnly && format === "mp4" ? requestedRemuxVideo : "none";
+  const convertVideo = !audioOnly ? requestedConvertVideo : "none";
 
   if (audioOnly && videoFormats.includes(format)) {
     throw new AppError(
@@ -412,12 +586,8 @@ export async function validateDownloadRequest(payload, config) {
     throw new AppError("Choose a video format when downloading video.", 400);
   }
 
-  if (audioOnly && requestedRemuxVideo !== "none") {
-    throw new AppError("Remuxing is only available for video downloads.", 400);
-  }
-
-  if (!audioOnly && format !== "mp4" && requestedRemuxVideo !== "none") {
-    throw new AppError("Remuxing is only available for mp4 video downloads.", 400);
+  if (audioOnly && requestedConvertVideo !== "none") {
+    throw new AppError("Conversion is only available for video downloads.", 400);
   }
 
   return {
@@ -426,7 +596,7 @@ export async function validateDownloadRequest(payload, config) {
     includePlaylist,
     format,
     quality,
-    remuxVideo
+    convertVideo
   };
 }
 
@@ -442,6 +612,11 @@ export async function executeDownloadJob({
   const jobDir = path.join(config.download.downloadDir, jobId);
 
   await fs.mkdir(jobDir, { recursive: true });
+
+  if (!settings.audioOnly && settings.convertVideo !== "none") {
+    await ensureFfmpegAvailable();
+  }
+
   emitProgress(onProgress, {
     downloadedBytes: null,
     etaSeconds: null,
@@ -455,6 +630,8 @@ export async function executeDownloadJob({
     buildYtDlpArgs(settings.mediaUrl, settings, config, jobDir, proxyUrl),
     onProgress
   );
+
+  await applyVideoConversion(jobDir, settings, onProgress);
 
   const files = await collectFiles(jobDir);
 

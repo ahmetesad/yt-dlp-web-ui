@@ -24,7 +24,9 @@ const staticMimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8"
+  ".json": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".wasm": "application/wasm"
 };
 const downloadMimeTypes = {
   ".m4a": "audio/mp4",
@@ -42,8 +44,10 @@ const securityHeaders = {
     "frame-ancestors 'none'",
     "img-src 'self' data:",
     "object-src 'none'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'"
+    ,
+    "worker-src 'self'"
   ].join("; "),
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -133,11 +137,13 @@ function requireJobId(jobId) {
 export function createAppServer({
   config,
   downloadExecutor = executeDownloadJob,
+  deleteAfterDownloadMs = config.download.deleteAfterDownloadMinutes * 60 * 1000,
   streamResolver = executeStreamLinkLookup,
   jobTtlMs = 60 * 60 * 1000,
   proxyUrl = ""
 }) {
   const jobStore = createJobStore({ jobTtlMs });
+  const deleteTimers = new Map();
   const loginLimiter = createRateLimiter(
     config.rateLimit.loginWindowMinutes * 60 * 1000,
     config.rateLimit.loginMaxAttempts
@@ -146,6 +152,58 @@ export function createAppServer({
     config.rateLimit.downloadWindowMinutes * 60 * 1000,
     config.rateLimit.downloadMaxRequests
   );
+
+  function clearDeleteTimer(filePath) {
+    const timer = deleteTimers.get(filePath);
+
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    deleteTimers.delete(filePath);
+  }
+
+  async function deleteFileAndMaybeJobDir(filePath) {
+    clearDeleteTimer(filePath);
+
+    try {
+      await fsp.rm(filePath, { force: true });
+    } catch {
+      return;
+    }
+
+    const jobDir = path.dirname(filePath);
+
+    try {
+      const remainingEntries = await fsp.readdir(jobDir);
+
+      if (remainingEntries.length === 0) {
+        await fsp.rmdir(jobDir);
+      }
+    } catch {
+      return;
+    }
+  }
+
+  function scheduleDeleteAfterDownload(filePath) {
+    if (!config.download.deleteAfterDownload || deleteAfterDownloadMs <= 0) {
+      return;
+    }
+
+    clearDeleteTimer(filePath);
+    const timer = setTimeout(() => {
+      deleteFileAndMaybeJobDir(filePath).catch(() => {
+        return;
+      });
+    }, deleteAfterDownloadMs);
+
+    if (typeof timer.unref === "function") {
+      timer.unref();
+    }
+
+    deleteTimers.set(filePath, timer);
+  }
 
   function ensureAuthenticated(request, { cookieOnly = false } = {}) {
     if (!config.auth.requirePassword) {
@@ -284,6 +342,12 @@ export function createAppServer({
 
     stream.on("error", () => {
       response.destroy();
+    });
+
+    response.once("finish", () => {
+      if (response.statusCode === 200) {
+        scheduleDeleteAfterDownload(file.absolutePath);
+      }
     });
 
     stream.pipe(response);
@@ -603,6 +667,11 @@ export function createAppServer({
   return {
     close() {
       return new Promise((resolve, reject) => {
+        for (const timer of deleteTimers.values()) {
+          clearTimeout(timer);
+        }
+
+        deleteTimers.clear();
         server.close((error) => {
           if (error) {
             reject(error);

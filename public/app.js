@@ -23,9 +23,10 @@ const labelMap = {
     m4a: "m4a",
     wav: "wav"
   },
-  remuxVideo: {
+  convertVideo: {
     none: "off",
-    mp4: "mp4 for iPhone/iPad"
+    remux: "remux mp4",
+    h264: "h264 mp4"
   }
 };
 
@@ -45,8 +46,8 @@ const elements = {
   actionProgressTrack: document.querySelector("#actionProgressTrack"),
   qualityGroup: document.querySelector("#qualityGroup"),
   qualityToggle: document.querySelector("#qualityToggle"),
-  remuxField: document.querySelector("#remuxField"),
-  remuxGroup: document.querySelector("#remuxGroup"),
+  convertField: document.querySelector("#convertField"),
+  convertGroup: document.querySelector("#convertGroup"),
   resetSettingsBtn: document.querySelector("#resetSettingsBtn"),
   results: document.querySelector("#results"),
   resultsLabel: document.querySelector("#resultsLabel"),
@@ -61,10 +62,26 @@ const state = {
   busy: false,
   client: null,
   jobStream: null,
+  resultFiles: [],
+  resultLinks: [],
   settings: null,
   showAllQualities: false,
   snapshotTimerId: 0
 };
+
+function supportsVideoConversion(settings) {
+  return Boolean(settings) && !settings.audioOnly;
+}
+
+function getVisibleConvertOptions(clientOptions, settings) {
+  if (!Array.isArray(clientOptions?.convertVideoOptions)) {
+    return ["none"];
+  }
+
+  return supportsVideoConversion(settings)
+    ? clientOptions.convertVideoOptions
+    : ["none"];
+}
 
 function readLocalStorage(key) {
   try {
@@ -130,18 +147,6 @@ function getAvailableFormats(audioOnly) {
   return audioOnly ? state.client.formats.audio : state.client.formats.video;
 }
 
-function supportsRemux(settings = state.settings) {
-  return Boolean(settings) && !settings.audioOnly && settings.format === "mp4";
-}
-
-function getVisibleRemuxOptions(settings = state.settings) {
-  if (!Array.isArray(state.client?.remuxVideoOptions)) {
-    return ["none"];
-  }
-
-  return supportsRemux(settings) ? state.client.remuxVideoOptions : ["none"];
-}
-
 function getVisibleQualityValues() {
   if (!state.client) {
     return [];
@@ -196,22 +201,24 @@ function normalizeSettings(candidate = {}) {
   const format = allowedFormats.includes(candidate.format)
     ? candidate.format
     : defaultFormat;
-  const remuxOptions = Array.isArray(state.client.remuxVideoOptions)
-    ? state.client.remuxVideoOptions
+  const convertOptions = Array.isArray(state.client.convertVideoOptions)
+    ? state.client.convertVideoOptions
     : ["none"];
-  const defaultRemuxVideo = remuxOptions.includes(defaults.remuxVideo)
-    ? defaults.remuxVideo
+  const defaultConvertVideo = convertOptions.includes(defaults.convertVideo)
+    ? defaults.convertVideo
     : "none";
-  const remuxVideo = remuxOptions.includes(candidate.remuxVideo)
-    ? candidate.remuxVideo
-    : defaultRemuxVideo;
+  const convertVideo = convertOptions.includes(candidate.convertVideo)
+    ? candidate.convertVideo
+    : defaultConvertVideo;
 
   return {
     audioOnly,
+    convertVideo: supportsVideoConversion({ audioOnly, format })
+      ? convertVideo
+      : "none",
     format,
     includePlaylist,
-    quality,
-    remuxVideo
+    quality
   };
 }
 
@@ -331,13 +338,17 @@ function syncForm() {
     state.settings.format,
     "format"
   );
-  elements.remuxField.hidden = false;
+  elements.convertField.hidden = false;
   renderChoiceGroup(
-    elements.remuxGroup,
-    getVisibleRemuxOptions(state.settings),
-    state.settings.remuxVideo,
-    "remuxVideo"
+    elements.convertGroup,
+    getVisibleConvertOptions(state.client, state.settings),
+    state.settings.convertVideo,
+    "convertVideo"
   );
+
+  if (state.resultFiles.length > 0) {
+    renderFileResults(state.resultFiles);
+  }
 }
 
 function setBusy(isBusy) {
@@ -348,6 +359,7 @@ function setBusy(isBusy) {
   elements.getLinkButton.disabled = isBusy;
   elements.logoutButton.disabled = isBusy;
   elements.mediaUrl.disabled = isBusy;
+  elements.qualityToggle.disabled = isBusy;
   elements.resetSettingsBtn.disabled = isBusy;
   const { authButton, password } = getAuthElements();
 
@@ -360,6 +372,10 @@ function setBusy(isBusy) {
   }
 
   document.querySelectorAll(".choice").forEach((button) => {
+    button.disabled = isBusy;
+  });
+
+  document.querySelectorAll("[data-result-action='true']").forEach((button) => {
     button.disabled = isBusy;
   });
 }
@@ -394,6 +410,10 @@ function getPhaseLabel(status, progress) {
     return "queued";
   }
 
+  if (progress?.phase === "converting" || status === "converting") {
+    return "converting";
+  }
+
   if (progress?.phase === "postprocessing") {
     return "processing";
   }
@@ -411,6 +431,10 @@ function setProgressState({ progress = null, status = "running" } = {}) {
   elements.actionProgressLabel.textContent =
     status === "queued" && normalizedPercent === null
       ? "queued"
+      : phaseLabel === "converting"
+        ? normalizedPercent === null
+          ? "converting"
+          : `converting ${Math.round(normalizedPercent)}%`
       : phaseLabel === "processing"
         ? normalizedPercent === null
           ? "processing"
@@ -424,7 +448,11 @@ function setProgressState({ progress = null, status = "running" } = {}) {
     elements.actionProgressTrack.removeAttribute("aria-valuenow");
     elements.actionProgressTrack.setAttribute(
       "aria-valuetext",
-      phaseLabel === "processing" ? "Processing media" : "Downloading media"
+      phaseLabel === "processing"
+        ? "Processing media"
+        : phaseLabel === "converting"
+          ? "Converting media"
+          : "Downloading media"
     );
     elements.actionProgressMeter.style.width = "";
     return;
@@ -541,12 +569,16 @@ function updateAuthVisibility() {
 }
 
 function clearResults(title = "results") {
+  state.resultFiles = [];
+  state.resultLinks = [];
   elements.resultsLabel.textContent = title;
   elements.resultsList.replaceChildren();
   elements.results.hidden = true;
 }
 
 function renderFileResults(files = []) {
+  state.resultFiles = files;
+  state.resultLinks = [];
   elements.resultsLabel.textContent = "ready files";
   elements.resultsList.replaceChildren();
   elements.results.hidden = files.length === 0;
@@ -569,6 +601,8 @@ function renderFileResults(files = []) {
     const action = document.createElement("button");
     action.type = "button";
     action.className = "action";
+    action.dataset.resultAction = "true";
+    action.disabled = state.busy;
     action.innerHTML = `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M12 4v10"></path>
@@ -577,8 +611,8 @@ function renderFileResults(files = []) {
       </svg>
       <span>Save</span>
     `;
-    action.addEventListener("click", () => {
-      triggerBrowserDownload(file);
+    action.addEventListener("click", async () => {
+      await handleFileSave(file);
     });
 
     copy.append(name, meta);
@@ -606,6 +640,8 @@ async function copyToClipboard(text) {
 }
 
 function renderLinkResults(links = []) {
+  state.resultFiles = [];
+  state.resultLinks = links;
   elements.resultsLabel.textContent = "stream links";
   elements.resultsList.replaceChildren();
   elements.results.hidden = links.length === 0;
@@ -631,6 +667,8 @@ function renderLinkResults(links = []) {
     const copyButton = document.createElement("button");
     copyButton.type = "button";
     copyButton.className = "action";
+    copyButton.dataset.resultAction = "true";
+    copyButton.disabled = state.busy;
     copyButton.innerHTML = `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="9" y="9" width="10" height="10" rx="2"></rect>
@@ -650,6 +688,8 @@ function renderLinkResults(links = []) {
     const openButton = document.createElement("button");
     openButton.type = "button";
     openButton.className = "action action-muted";
+    openButton.dataset.resultAction = "true";
+    openButton.disabled = state.busy;
     openButton.innerHTML = `
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M14 5h5v5"></path>
@@ -678,6 +718,37 @@ function triggerBrowserDownload(file) {
   document.body.append(link);
   link.click();
   link.remove();
+}
+
+function renderCurrentResults() {
+  if (state.resultFiles.length > 0) {
+    renderFileResults(state.resultFiles);
+    return;
+  }
+
+  if (state.resultLinks.length > 0) {
+    renderLinkResults(state.resultLinks);
+  }
+}
+
+async function handleFileSave(file) {
+  if (state.busy || state.activeJobId) {
+    return;
+  }
+
+  try {
+    triggerBrowserDownload(file);
+    setStatus("File is ready.", "success");
+  } catch (error) {
+    hideProgress();
+    setBusy(false);
+    setStatus(
+      error instanceof Error && error.message
+        ? error.message
+        : String(error || "Could not save the file."),
+      "error"
+    );
+  }
 }
 
 function parseEventPayload(event) {
@@ -710,19 +781,20 @@ function getRequestPayload() {
   return {
     mediaUrl,
     ...state.settings,
-    remuxVideo: supportsRemux(state.settings) ? state.settings.remuxVideo : "none"
+    convertVideo: supportsVideoConversion(state.settings)
+      ? state.settings.convertVideo
+      : "none"
   };
 }
 
-function completeActiveJob(files = []) {
+async function completeActiveJob(files = []) {
   clearActiveJob();
   setBusy(false);
   hideProgress();
   renderFileResults(files);
 
   if (files.length === 1) {
-    triggerBrowserDownload(files[0]);
-    setStatus("File is ready.", "success");
+    await handleFileSave(files[0]);
     return;
   }
 
@@ -747,7 +819,7 @@ function applyJobSnapshot(snapshot) {
   });
 
   if (snapshot.status === "completed") {
-    completeActiveJob(snapshot.files);
+    void completeActiveJob(snapshot.files);
     return;
   }
 
@@ -827,7 +899,7 @@ function openJobStream(jobId) {
     }
 
     const payload = parseEventPayload(event);
-    completeActiveJob(payload?.files || []);
+    void completeActiveJob(payload?.files || []);
   });
 
   stream.addEventListener("error", (event) => {
