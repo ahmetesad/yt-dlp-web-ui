@@ -6,15 +6,29 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
-function readJson(filePath) {
-  const raw = fs.readFileSync(filePath, "utf8");
-
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Invalid JSON in ${filePath}: ${error.message}`);
-  }
-}
+const defaults = {
+  host: "127.0.0.1",
+  port: 3000,
+  maxRequestBytes: 24576,
+  loginWindowMinutes: 15,
+  loginMaxAttempts: 0,
+  downloadWindowMinutes: 10,
+  downloadMaxRequests: 0,
+  requirePassword: false,
+  secureCookies: false,
+  sessionDays: 30,
+  downloadDir: "./downloads",
+  cleanupAfterHours: 6,
+  deleteAfterDownload: true,
+  deleteAfterDownloadMinutes: 5,
+  maxPlaylistItems: 25,
+  maxUrlLength: 2048,
+  defaultAudioOnly: false,
+  defaultFormat: "mp4",
+  defaultConvertVideo: "none",
+  defaultQuality: "1080",
+  defaultIncludePlaylist: false
+};
 
 function readEnvFile(filePath) {
   if (!fs.existsSync(filePath)) {
@@ -57,14 +71,6 @@ function readEnvFile(filePath) {
   return env;
 }
 
-function expectObject(value, label) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be an object`);
-  }
-
-  return value;
-}
-
 function expectBoolean(value, label) {
   if (typeof value !== "boolean") {
     throw new Error(`${label} must be a boolean`);
@@ -97,114 +103,184 @@ function expectChoice(value, label, choices) {
   return value;
 }
 
-export function loadConfig() {
-  const configPath = path.join(rootDir, "config.json");
-  const envPath = path.join(rootDir, ".env");
-  const config = readJson(configPath);
-  const env = readEnvFile(envPath);
+function envString(env, key, fallback) {
+  return env[key] === undefined ? fallback : env[key];
+}
 
-  const server = expectObject(config.server, "config.server");
-  const rateLimit = expectObject(config.rateLimit, "config.rateLimit");
-  const auth = expectObject(config.auth, "config.auth");
-  const download = expectObject(config.download, "config.download");
+function envInteger(env, key, fallback) {
+  if (env[key] === undefined) {
+    return fallback;
+  }
+
+  if (!env[key].trim()) {
+    return Number.NaN;
+  }
+
+  return Number(env[key]);
+}
+
+function envBoolean(env, key, fallback) {
+  if (env[key] === undefined) {
+    return fallback;
+  }
+
+  const value = env[key].trim().toLowerCase();
+
+  if (value === "true" || value === "1") {
+    return true;
+  }
+
+  if (value === "false" || value === "0") {
+    return false;
+  }
+
+  throw new Error(`${key} must be true, false, 1, or 0`);
+}
+
+export function loadConfig() {
+  const envPath = path.join(rootDir, ".env");
+  // Keep .env convenient locally; deployment environment variables win.
+  const env = { ...readEnvFile(envPath), ...process.env };
 
   const loadedConfig = {
     rootDir,
     publicDir: path.join(rootDir, "public"),
     server: {
-      host: expectString(server.host, "config.server.host"),
-      port: expectInteger(server.port, "config.server.port", 1),
+      host: expectString(
+        envString(env, "HOST", defaults.host),
+        "HOST"
+      ),
+      port: expectInteger(
+        envInteger(env, "PORT", defaults.port),
+        "PORT",
+        1
+      ),
       maxRequestBytes: expectInteger(
-        server.maxRequestBytes,
-        "config.server.maxRequestBytes",
+        envInteger(env, "MAX_REQUEST_BYTES", defaults.maxRequestBytes),
+        "MAX_REQUEST_BYTES",
         1024
       )
     },
     rateLimit: {
       loginWindowMinutes: expectInteger(
-        rateLimit.loginWindowMinutes,
-        "config.rateLimit.loginWindowMinutes",
+        envInteger(
+          env,
+          "LOGIN_WINDOW_MINUTES",
+          defaults.loginWindowMinutes
+        ),
+        "LOGIN_WINDOW_MINUTES",
         1
       ),
       loginMaxAttempts: expectInteger(
-        rateLimit.loginMaxAttempts,
-        "config.rateLimit.loginMaxAttempts",
+        envInteger(env, "LOGIN_MAX_ATTEMPTS", defaults.loginMaxAttempts),
+        "LOGIN_MAX_ATTEMPTS",
         0
       ),
       downloadWindowMinutes: expectInteger(
-        rateLimit.downloadWindowMinutes,
-        "config.rateLimit.downloadWindowMinutes",
+        envInteger(
+          env,
+          "DOWNLOAD_WINDOW_MINUTES",
+          defaults.downloadWindowMinutes
+        ),
+        "DOWNLOAD_WINDOW_MINUTES",
         1
       ),
       downloadMaxRequests: expectInteger(
-        rateLimit.downloadMaxRequests,
-        "config.rateLimit.downloadMaxRequests",
+        envInteger(
+          env,
+          "DOWNLOAD_MAX_REQUESTS",
+          defaults.downloadMaxRequests
+        ),
+        "DOWNLOAD_MAX_REQUESTS",
         0
       )
     },
     auth: {
       requirePassword: expectBoolean(
-        auth.requirePassword,
-        "config.auth.requirePassword"
+        envBoolean(env, "REQUIRE_PASSWORD", defaults.requirePassword),
+        "REQUIRE_PASSWORD"
       ),
       secureCookies: expectBoolean(
-        auth.secureCookies,
-        "config.auth.secureCookies"
+        envBoolean(env, "SECURE_COOKIES", defaults.secureCookies),
+        "SECURE_COOKIES"
       ),
-      sessionDays: expectInteger(auth.sessionDays, "config.auth.sessionDays", 1),
+      sessionDays: expectInteger(
+        envInteger(env, "SESSION_DAYS", defaults.sessionDays),
+        "SESSION_DAYS",
+        1
+      ),
       cookieName: "ytdlp_auth",
-      password: env.APP_PASSWORD || "",
-      sessionSecret: env.SESSION_SECRET || ""
+      password: env.APP_PASSWORD ?? "",
+      sessionSecret: env.SESSION_SECRET ?? ""
     },
     download: {
       downloadDir: path.resolve(
         rootDir,
-        expectString(download.downloadDir, "config.download.downloadDir")
+        expectString(
+          envString(env, "DOWNLOAD_DIR", defaults.downloadDir),
+          "DOWNLOAD_DIR"
+        )
       ),
       cleanupAfterHours: expectInteger(
-        download.cleanupAfterHours,
-        "config.download.cleanupAfterHours",
+        envInteger(env, "CLEANUP_AFTER_HOURS", defaults.cleanupAfterHours),
+        "CLEANUP_AFTER_HOURS",
         1
       ),
       deleteAfterDownload: expectBoolean(
-        download.deleteAfterDownload,
-        "config.download.deleteAfterDownload"
+        envBoolean(
+          env,
+          "DELETE_AFTER_DOWNLOAD",
+          defaults.deleteAfterDownload
+        ),
+        "DELETE_AFTER_DOWNLOAD"
       ),
       deleteAfterDownloadMinutes: expectInteger(
-        download.deleteAfterDownloadMinutes,
-        "config.download.deleteAfterDownloadMinutes",
+        envInteger(
+          env,
+          "DELETE_AFTER_DOWNLOAD_MINUTES",
+          defaults.deleteAfterDownloadMinutes
+        ),
+        "DELETE_AFTER_DOWNLOAD_MINUTES",
         1
       ),
       maxPlaylistItems: expectInteger(
-        download.maxPlaylistItems,
-        "config.download.maxPlaylistItems",
+        envInteger(env, "MAX_PLAYLIST_ITEMS", defaults.maxPlaylistItems),
+        "MAX_PLAYLIST_ITEMS",
         1
       ),
       maxUrlLength: expectInteger(
-        download.maxUrlLength,
-        "config.download.maxUrlLength",
+        envInteger(env, "MAX_URL_LENGTH", defaults.maxUrlLength),
+        "MAX_URL_LENGTH",
         128
       ),
       defaultAudioOnly: expectBoolean(
-        download.defaultAudioOnly,
-        "config.download.defaultAudioOnly"
+        envBoolean(env, "DEFAULT_AUDIO_ONLY", defaults.defaultAudioOnly),
+        "DEFAULT_AUDIO_ONLY"
       ),
       defaultFormat: expectString(
-        download.defaultFormat,
-        "config.download.defaultFormat"
+        envString(env, "DEFAULT_FORMAT", defaults.defaultFormat),
+        "DEFAULT_FORMAT"
       ),
       defaultConvertVideo: expectChoice(
-        download.defaultConvertVideo,
-        "config.download.defaultConvertVideo",
+        envString(
+          env,
+          "DEFAULT_CONVERT_VIDEO",
+          defaults.defaultConvertVideo
+        ),
+        "DEFAULT_CONVERT_VIDEO",
         ["none", "remux", "h264"]
       ),
       defaultQuality: expectString(
-        download.defaultQuality,
-        "config.download.defaultQuality"
+        envString(env, "DEFAULT_QUALITY", defaults.defaultQuality),
+        "DEFAULT_QUALITY"
       ),
       defaultIncludePlaylist: expectBoolean(
-        download.defaultIncludePlaylist,
-        "config.download.defaultIncludePlaylist"
+        envBoolean(
+          env,
+          "DEFAULT_INCLUDE_PLAYLIST",
+          defaults.defaultIncludePlaylist
+        ),
+        "DEFAULT_INCLUDE_PLAYLIST"
       )
     }
   };
@@ -215,7 +291,7 @@ export function loadConfig() {
       loadedConfig.auth.sessionSecret.length < 16)
   ) {
     throw new Error(
-      "Password auth is enabled, but APP_PASSWORD or a 16+ character SESSION_SECRET is missing in .env"
+      "Password auth is enabled, but APP_PASSWORD or a 16+ character SESSION_SECRET is missing from the environment or .env"
     );
   }
 

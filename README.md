@@ -25,7 +25,36 @@ Minimal single-page yt-dlp UI built with native Node.js APIs only. Downloads, re
 npm start
 ```
 
-The app listens on the host and port defined in [`config.json`](./config.json).
+The app uses built-in defaults and listens on `127.0.0.1:3000`. Copy
+`.env.example` to `.env` to customize local settings. Runtime environment
+variables take precedence over `.env`, so deployment platforms can inject the
+complete configuration without creating a file.
+
+## Docker
+
+Build and run the image:
+
+```sh
+docker build -t yt-dlp-web-ui .
+docker run --rm -p 3000:3000 \
+  -v yt-dlp-downloads:/app/downloads \
+  yt-dlp-web-ui
+```
+
+To enable authentication, pass the complete auth configuration at runtime:
+
+```sh
+docker run --rm -p 3000:3000 \
+  -e REQUIRE_PASSWORD=true \
+  -e APP_PASSWORD='choose-a-password' \
+  -e SESSION_SECRET='choose-a-long-random-secret' \
+  yt-dlp-web-ui
+```
+
+No image files need to be modified. [`.env.example`](./.env.example) lists every
+available setting and its default. Pass any of them with `docker run -e`, an
+env file, or your deployment platform's secret/configuration interface.
+Boolean variables accept `true`, `false`, `1`, or `0`.
 
 ## Password auth
 
@@ -34,10 +63,10 @@ Password auth is off by default.
 To enable it:
 
 1. Copy `.env.example` to `.env`.
-2. Set `APP_PASSWORD`.
-3. Set a long random `SESSION_SECRET`.
-4. Change `auth.requirePassword` to `true` in [`config.json`](./config.json).
-5. If you are serving the app over HTTPS, set `auth.secureCookies` to `true`.
+2. Set `REQUIRE_PASSWORD=true`.
+3. Set `APP_PASSWORD`.
+4. Set a long random `SESSION_SECRET`.
+5. If you are serving the app over HTTPS, set `SECURE_COOKIES=true`.
 
 The browser stores the session token in both a cookie and `localStorage`, so you only need to unlock once per device/session window.
 
@@ -45,12 +74,12 @@ The browser stores the session token in both a cookie and `localStorage`, so you
 
 Request throttling is disabled by default for personal use.
 
-If you want it, tune the values in [`config.json`](./config.json):
+If you want it, set these environment variables:
 
-- `rateLimit.loginMaxAttempts`
-- `rateLimit.loginWindowMinutes`
-- `rateLimit.downloadMaxRequests`
-- `rateLimit.downloadWindowMinutes`
+- `LOGIN_MAX_ATTEMPTS`
+- `LOGIN_WINDOW_MINUTES`
+- `DOWNLOAD_MAX_REQUESTS`
+- `DOWNLOAD_WINDOW_MINUTES`
 
 Set either max value to `0` to keep that limiter disabled.
 
@@ -58,10 +87,10 @@ Set either max value to `0` to keep that limiter disabled.
 
 Saved files are deleted a few minutes after a real file download by default.
 
-You can tune this in [`config.json`](./config.json):
+You can tune this with:
 
-- `download.deleteAfterDownload`
-- `download.deleteAfterDownloadMinutes`
+- `DELETE_AFTER_DOWNLOAD`
+- `DELETE_AFTER_DOWNLOAD_MINUTES`
 
 ## Notes
 
