@@ -1,3 +1,5 @@
+import { processDownloadedFiles } from "./media.js";
+
 const storageKeys = {
   settings: "ytdlp_web_ui_settings",
   token: "ytdlp_web_ui_session_token"
@@ -569,6 +571,12 @@ function updateAuthVisibility() {
 }
 
 function clearResults(title = "results") {
+  for (const file of state.resultFiles) {
+    if (file.browserGenerated && file.url) {
+      URL.revokeObjectURL(file.url);
+    }
+  }
+
   state.resultFiles = [];
   state.resultLinks = [];
   elements.resultsLabel.textContent = title;
@@ -789,16 +797,37 @@ function getRequestPayload() {
 
 async function completeActiveJob(files = []) {
   clearActiveJob();
-  setBusy(false);
-  hideProgress();
-  renderFileResults(files);
+  const processingSettings = { ...state.settings };
 
-  if (files.length === 1) {
-    await handleFileSave(files[0]);
-    return;
+  try {
+    const processedFiles = await processDownloadedFiles(
+      files,
+      processingSettings,
+      (progress) => {
+        setProgressState({ progress, status: progress.phase });
+      }
+    );
+
+    setBusy(false);
+    hideProgress();
+    renderFileResults(processedFiles);
+
+    if (processedFiles.length === 1) {
+      await handleFileSave(processedFiles[0]);
+      return;
+    }
+
+    setStatus(`${processedFiles.length} files are ready.`, "success");
+  } catch (error) {
+    setBusy(false);
+    hideProgress();
+    setStatus(
+      error instanceof Error && error.message
+        ? error.message
+        : "Browser media processing failed.",
+      "error"
+    );
   }
-
-  setStatus(`${files.length} files are ready.`, "success");
 }
 
 function failActiveJob(message) {

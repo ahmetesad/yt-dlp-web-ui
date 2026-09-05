@@ -4,11 +4,30 @@ const terminalStatuses = new Set(["completed", "failed"]);
 
 function cloneFiles(files) {
   return Array.isArray(files)
-    ? files.map((file) => ({
-        name: file.name,
-        size: file.size,
-        url: file.url
-      }))
+    ? files.map((file) => {
+        const clonedFile = {
+          name: file.name,
+          size: file.size,
+          url: file.url
+        };
+
+        for (const key of [
+          "audioCodec",
+          "formatId",
+          "hasAudio",
+          "hasVideo",
+          "mediaId",
+          "sourceFormat",
+          "title",
+          "videoCodec"
+        ]) {
+          if (Object.hasOwn(file, key)) {
+            clonedFile[key] = file[key];
+          }
+        }
+
+        return clonedFile;
+      })
     : [];
 }
 

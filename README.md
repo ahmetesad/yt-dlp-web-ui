@@ -1,34 +1,41 @@
 # yt-dlp web ui
 
-Minimal single-page yt-dlp UI built with native Node.js APIs only. Downloads, remuxing, and H.264 conversion all run on the server with `yt-dlp` and `ffmpeg`.
+Minimal single-page yt-dlp UI. The server downloads source tracks with `yt-dlp` and [MediaBunny](https://github.com/Vanilagy/mediabunny) muxes and
+encodes them in the browser.
 
 <img src="./screenshots/ytdlpwebui.png">
 
 ## Features
 
 - Single-page UI served by native `node:http`
+- Browser-side MP4/WebM muxing and H.264 encoding with MediaBunny
+- Browser-side MP3 and WAV audio conversion
 - Saved download settings in `localStorage`
-- Compact live download progress in the sticky action area
-- Direct stream-link lookup for platforms where a raw media URL is more useful than a saved file
-- Optional server-side video conversion to `remux mp4` or `h264 mp4`
-- Short quality picker by default, with a toggle to reveal the full list
+- Live progress for both the server download and browser processing
+- Direct stream-link lookup
+- Optional playlist downloads
 
 ## Requirements
 
 - Node.js 18+
 - `yt-dlp` available on `PATH`
-- `ffmpeg` available on `PATH` if you use `convert`
+- A modern browser supported by MediaBunny
+- Browser WebCodecs H.264 support when using `h264 mp4`
+
+FFmpeg is not required. Browser encoding APIs are normally available only in a
+secure context (HTTPS or localhost).
 
 ## Run
 
+Install the pinned browser dependencies and start the server:
+
 ```sh
+npm ci
 npm start
 ```
 
 The app uses built-in defaults and listens on `127.0.0.1:3000`. Copy
-`.env.example` to `.env` to customize local settings. Runtime environment
-variables take precedence over `.env`, so deployment platforms can inject the
-complete configuration without creating a file.
+`.env.example` to `.env` to customize local settings. **Runtime environment variables take precedence over `.env`.**
 
 ## Docker
 
@@ -41,7 +48,9 @@ docker run --rm -p 3000:3000 \
   yt-dlp-web-ui
 ```
 
-To enable authentication, pass the complete auth configuration at runtime:
+The image contains Node.js, Python, `yt-dlp`, MediaBunny's browser bundles, and the LAME-based MediaBunny MP3 encoder.
+
+To enable authentication entirely through environment variables:
 
 ```sh
 docker run --rm -p 3000:3000 \
@@ -51,57 +60,72 @@ docker run --rm -p 3000:3000 \
   yt-dlp-web-ui
 ```
 
-No image files need to be modified. [`.env.example`](./.env.example) lists every
-available setting and its default. Pass any of them with `docker run -e`, an
-env file, or your deployment platform's secret/configuration interface.
-Boolean variables accept `true`, `false`, `1`, or `0`.
+[`.env.example`](./.env.example) lists every
+setting and default. Pass them with `docker run -e`, `--env-file`, or your
+platform's secrets/configuration interface. Boolean variables accept `true`,
+`false`, `1`, or `0`.
+
+## How media processing works
+
+For video jobs, `yt-dlp` downloads the selected video and audio tracks as
+separate files. It deliberately uses a comma-separated format selector and no
+merge or extraction postprocessors, so `yt-dlp` never needs FFmpeg. The browser
+then fetches those temporary tracks and uses MediaBunny's Conversion API:
+
+- `off` muxes compatible source tracks into the selected MP4 or WebM container.
+- `remux mp4` copies MP4-compatible codecs without re-encoding and rejects
+  incompatible codecs.
+- `h264 mp4` encodes video as H.264 through the browser's WebCodecs
+  implementation and keeps AAC audio when available.
+- MP3 uses MediaBunny's LAME/WASM encoder; WAV uses PCM encoding in MediaBunny.
+- M4A requests an AAC source from `yt-dlp` and normally copies it without
+  re-encoding.
+
+The current implementation buffers each source and completed output in browser
+memory. Very large or long videos therefore require substantial memory. Codec
+support also varies by browser; when the requested conversion is unavailable, the UI reports an error and suggests a compatible mode.
 
 ## Password auth
 
-Password auth is off by default.
+Password auth is off by default. To enable it, set:
 
-To enable it:
+- `REQUIRE_PASSWORD=true`
+- `APP_PASSWORD`
+- a long random `SESSION_SECRET`
+- `SECURE_COOKIES=true` when serving over HTTPS
 
-1. Copy `.env.example` to `.env`.
-2. Set `REQUIRE_PASSWORD=true`.
-3. Set `APP_PASSWORD`.
-4. Set a long random `SESSION_SECRET`.
-5. If you are serving the app over HTTPS, set `SECURE_COOKIES=true`.
+The browser stores the session token in both a cookie and `localStorage`, so
+you only need to unlock once per device/session window.
 
-The browser stores the session token in both a cookie and `localStorage`, so you only need to unlock once per device/session window.
+## Rate limiting and retention
 
-## Rate limiting
+Request throttling is disabled by default. Configure it with
+`LOGIN_MAX_ATTEMPTS`, `LOGIN_WINDOW_MINUTES`, `DOWNLOAD_MAX_REQUESTS`, and
+`DOWNLOAD_WINDOW_MINUTES`; a maximum of `0` disables that limiter.
 
-Request throttling is disabled by default for personal use.
+Temporary server files are deleted shortly after the browser fetches them by
+default. Configure this with `DELETE_AFTER_DOWNLOAD` and
+`DELETE_AFTER_DOWNLOAD_MINUTES`. Old job directories are also removed after
+`CLEANUP_AFTER_HOURS`.
 
-If you want it, set these environment variables:
+## Security notes
 
-- `LOGIN_MAX_ATTEMPTS`
-- `LOGIN_WINDOW_MINUTES`
-- `DOWNLOAD_MAX_REQUESTS`
-- `DOWNLOAD_WINDOW_MINUTES`
+- The server accepts explicit JSON fields and invokes `yt-dlp` with fixed
+  argument lists.
+- Outbound `yt-dlp` traffic goes through a filtering proxy so redirects and
+  follow-up requests cannot hop into private or loopback addresses.
+- Only `http` and `https` URLs are accepted; private, loopback, and local-only
+  hosts are rejected.
+- `HEAD` requests do not trigger delete-after-download cleanup.
+- MediaBunny dependencies are exposed through two fixed vendor URLs. The server
+  does not expose `node_modules` generally.
 
-Set either max value to `0` to keep that limiter disabled.
+## Licensing
 
-## Download retention
+MediaBunny and its MP3 encoder package are MPL-2.0. The MP3
+extension embeds LAME, which is LGPL-licensed. H.264 and MP3 may also involve
+patent or royalty rules depending on jurisdiction and distribution model.
 
-Saved files are deleted a few minutes after a real file download by default.
-
-You can tune this with:
-
-- `DELETE_AFTER_DOWNLOAD`
-- `DELETE_AFTER_DOWNLOAD_MINUTES`
-
-## Notes
-
-- The server only accepts explicit JSON fields and only invokes `yt-dlp` with fixed argument lists.
-- Outbound `yt-dlp` traffic is forced through a local filtering proxy so redirects and follow-up requests cannot hop into private or loopback addresses.
-- Only `http` and `https` URLs are accepted.
-- Private, loopback, and local-only hosts are rejected.
-- Download settings are saved in `localStorage`.
-- If `convert` is enabled, the server uses `ffmpeg` with fixed argument lists after the download completes.
-- If `convert` is enabled but `ffmpeg` is missing, the server returns a clean error instead of crashing, which should help with debugging.
-- `remux mp4` repackages the file into an MP4 container without re-encoding video.
-- `h264 mp4` re-encodes video on the server with `ffmpeg`.
-- `HEAD` requests do not trigger delete-after-download cleanup; only completed file downloads do.
-- Old downloads are cleaned out automatically from the configured download directory.
+See [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) for versions, source,
+and obligations. The application's own code is released under the permissive
+[MIT License](./LICENSE). This summary is not legal advice.
