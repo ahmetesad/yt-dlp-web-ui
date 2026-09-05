@@ -2,6 +2,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildLogoutCookie,
   buildSessionCookie,
@@ -28,6 +29,23 @@ const staticMimeTypes = {
   ".mjs": "text/javascript; charset=utf-8",
   ".wasm": "application/wasm"
 };
+const sourceDirectory = path.dirname(fileURLToPath(import.meta.url));
+const browserDependencyFiles = new Map([
+  [
+    "/vendor/mediabunny.js",
+    path.resolve(
+      sourceDirectory,
+      "../node_modules/mediabunny/dist/bundles/mediabunny.min.cjs"
+    )
+  ],
+  [
+    "/vendor/mediabunny-mp3-encoder.js",
+    path.resolve(
+      sourceDirectory,
+      "../node_modules/@mediabunny/mp3-encoder/dist/bundles/mediabunny-mp3-encoder.min.js"
+    )
+  ]
+]);
 const downloadMimeTypes = {
   ".m4a": "audio/mp4",
   ".mp3": "audio/mpeg",
@@ -45,9 +63,8 @@ const securityHeaders = {
     "img-src 'self' data:",
     "object-src 'none'",
     "script-src 'self' 'wasm-unsafe-eval'",
-    "style-src 'self' 'unsafe-inline'"
-    ,
-    "worker-src 'self'"
+    "style-src 'self' 'unsafe-inline'",
+    "worker-src 'self' blob:"
   ].join("; "),
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
@@ -271,13 +288,18 @@ export function createAppServer({
   }
 
   async function serveStatic(requestPath, response, sendBody) {
+    const browserDependencyPath = browserDependencyFiles.get(requestPath);
     const relativePath =
       requestPath === "/" || !path.extname(requestPath)
         ? "./index.html"
         : `.${requestPath}`;
-    const filePath = path.resolve(config.publicDir, relativePath);
+    const filePath =
+      browserDependencyPath || path.resolve(config.publicDir, relativePath);
 
-    if (!filePath.startsWith(config.publicDir + path.sep)) {
+    if (
+      !browserDependencyPath &&
+      !filePath.startsWith(config.publicDir + path.sep)
+    ) {
       throw new AppError("Not found.", 404);
     }
 
@@ -293,7 +315,9 @@ export function createAppServer({
       throw error;
     }
 
-    const extension = path.extname(filePath).toLowerCase();
+    const extension = path
+      .extname(browserDependencyPath ? requestPath : filePath)
+      .toLowerCase();
 
     response.writeHead(
       200,

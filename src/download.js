@@ -10,7 +10,7 @@ import { buildProgressArgs, parseProgressLine } from "./progress.js";
 const videoFormats = ["mp4", "webm"];
 const audioFormats = ["mp3", "m4a", "wav"];
 const convertVideoOptions = ["none", "remux", "h264"];
-const convertibleVideoExtensions = new Set([".m4v", ".mkv", ".mov", ".mp4", ".webm"]);
+const downloadResultPrefix = "__YTDLP_RESULT__";
 const qualityOptions = [
   "best",
   "2160",
@@ -41,27 +41,42 @@ function expectChoice(value, label, choices) {
 
 function buildVideoSelector(format, quality) {
   const audioExtension = format === "mp4" ? "m4a" : "webm";
+  let videoSelector;
 
   if (quality === "worst") {
-    return "worstvideo*+worstaudio/worst";
-  }
-
-  if (quality === "best") {
-    return [
-      `bestvideo[ext=${format}]+bestaudio[ext=${audioExtension}]`,
+    videoSelector = [
+      `worstvideo[ext=${format}]`,
+      "worstvideo",
+      "worst"
+    ].join("/");
+  } else if (quality === "best") {
+    videoSelector = [
+      `bestvideo[ext=${format}]`,
+      "bestvideo",
       `best[ext=${format}]`,
       "best"
     ].join("/");
+  } else {
+    videoSelector = [
+      `bestvideo[height<=${quality}][ext=${format}]`,
+      `bestvideo[height<=${quality}]`,
+      `best[height<=${quality}][ext=${format}]`,
+      `best[height<=${quality}]`
+    ].join("/");
   }
 
-  return [
-    `bestvideo[height<=${quality}][ext=${format}]+bestaudio[ext=${audioExtension}]`,
-    `best[height<=${quality}][ext=${format}]`,
-    `best[height<=${quality}]`
+  const audioSelector = [
+    `${quality === "worst" ? "worstaudio" : "bestaudio"}[ext=${audioExtension}]`,
+    quality === "worst" ? "worstaudio" : "bestaudio",
+    quality === "worst" ? "worst" : "best"
   ].join("/");
+
+  // A comma asks yt-dlp for separate files. A plus asks it to merge with
+  // ffmpeg, which this project intentionally does not install.
+  return `${videoSelector},${audioSelector}`;
 }
 
-function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
+export function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
   const args = [
     "--no-config-locations",
     "--no-warnings",
@@ -74,7 +89,9 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
     "--paths",
     jobDir,
     "-o",
-    "%(title).120B_[%(id)s].%(ext)s",
+    "%(title).100B_[%(id)s]__%(format_id)s.%(ext)s",
+    "--print",
+    `after_move:${downloadResultPrefix}%()j`,
     ...buildProgressArgs()
   ];
 
@@ -93,21 +110,14 @@ function buildYtDlpArgs(url, settings, config, jobDir, proxyUrl) {
   }
 
   if (settings.audioOnly) {
-    args.push(
-      "--format",
-      "bestaudio/best",
-      "--extract-audio",
-      "--audio-format",
-      settings.format
-    );
+    args.push("--format", "bestaudio/best");
   } else {
+    const browserOutputFormat =
+      settings.convertVideo === "none" ? settings.format : "mp4";
     args.push(
       "--format",
-      buildVideoSelector(settings.format, settings.quality),
-      "--merge-output-format",
-      settings.format
+      buildVideoSelector(browserOutputFormat, settings.quality)
     );
-
   }
 
   args.push("--", url);
@@ -138,7 +148,12 @@ function buildStreamLinkArgs(url, settings, config, proxyUrl) {
   if (settings.audioOnly) {
     args.push("--format", "bestaudio/best");
   } else {
-    args.push("--format", buildVideoSelector(settings.format, settings.quality));
+    const browserOutputFormat =
+      settings.convertVideo === "none" ? settings.format : "mp4";
+    args.push(
+      "--format",
+      buildVideoSelector(browserOutputFormat, settings.quality)
+    );
   }
 
   args.push("--", url);
@@ -162,10 +177,6 @@ function normalizeYtDlpMessage(stderr, stdout) {
   return normalizeCommandMessage(stderr, stdout, "yt-dlp failed.");
 }
 
-function normalizeFfmpegMessage(stderr, stdout) {
-  return normalizeCommandMessage(stderr, stdout, "ffmpeg failed.");
-}
-
 function emitProgress(onProgress, progress) {
   if (typeof onProgress !== "function" || !progress) {
     return;
@@ -174,77 +185,17 @@ function emitProgress(onProgress, progress) {
   onProgress(progress);
 }
 
-function isVideoFile(fileName) {
-  return convertibleVideoExtensions.has(path.extname(fileName).toLowerCase());
-}
-
-function getConvertedFileName(fileName, mode) {
-  const extension = path.extname(fileName);
-  const baseName = extension ? fileName.slice(0, -extension.length) : fileName;
-  return mode === "remux" ? `${baseName}_mp4.mp4` : `${baseName}_h264.mp4`;
-}
-
-function buildFfmpegArgs(inputPath, outputPath, mode) {
-  const args = [
-    "-hide_banner",
-    "-loglevel",
-    "error",
-    "-nostdin",
-    "-y",
-    "-i",
-    inputPath,
-    "-map",
-    "0:v:0",
-    "-map",
-    "0:a?"
-  ];
-
-  if (mode === "remux") {
-    return [
-      ...args,
-      "-c:v",
-      "copy",
-      "-c:a",
-      "copy",
-      "-movflags",
-      "+faststart",
-      outputPath
-    ];
-  }
-
-  if (mode === "h264") {
-    return [
-      ...args,
-      "-vf",
-      "scale=trunc(iw/2)*2:trunc(ih/2)*2",
-      "-c:v",
-      "libx264",
-      "-preset",
-      "veryfast",
-      "-crf",
-      "23",
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-movflags",
-      "+faststart",
-      outputPath
-    ];
-  }
-
-  throw new AppError("convertVideo is not allowed.", 400);
-}
-
-function attachProgressReader(stream, onProgress) {
+function attachProgressReader(stream, onProgress, onLine) {
   const reader = readline.createInterface({
     crlfDelay: Infinity,
     input: stream
   });
 
   reader.on("line", (line) => {
+    if (onLine?.(line)) {
+      return;
+    }
+
     emitProgress(onProgress, parseProgressLine(line));
   });
 
@@ -255,12 +206,27 @@ function runYtDlp(args, onProgress) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
+    const downloadMetadata = [];
     const child = spawn("yt-dlp", args, {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"]
     });
     const readers = [
-      attachProgressReader(child.stdout, onProgress),
+      attachProgressReader(child.stdout, onProgress, (line) => {
+        if (!line.startsWith(downloadResultPrefix)) {
+          return false;
+        }
+
+        try {
+          downloadMetadata.push(
+            JSON.parse(line.slice(downloadResultPrefix.length))
+          );
+        } catch {
+          // A malformed metadata line is handled after the command completes.
+        }
+
+        return true;
+      }),
       attachProgressReader(child.stderr, onProgress)
     ];
 
@@ -293,7 +259,7 @@ function runYtDlp(args, onProgress) {
       });
 
       if (code === 0) {
-        resolve();
+        resolve(downloadMetadata);
         return;
       }
 
@@ -351,74 +317,6 @@ function runYtDlpForLinks(args) {
   });
 }
 
-function ensureFfmpegAvailable() {
-  return new Promise((resolve, reject) => {
-    const child = spawn("ffmpeg", ["-version"], {
-      shell: false,
-      stdio: "ignore"
-    });
-
-    child.on("error", (error) => {
-      if (error && error.code === "ENOENT") {
-        reject(
-          new AppError("ffmpeg is not installed or is not available on PATH.", 503)
-        );
-        return;
-      }
-
-      reject(new AppError("The server could not start ffmpeg.", 500));
-    });
-
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new AppError("ffmpeg is installed but could not be started.", 503));
-    });
-  });
-}
-
-function runFfmpeg(args) {
-  return new Promise((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
-    const child = spawn("ffmpeg", args, {
-      shell: false,
-      stdio: ["ignore", "pipe", "pipe"]
-    });
-
-    child.stdout.on("data", (chunk) => {
-      stdout = truncateOutput(stdout, chunk);
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr = truncateOutput(stderr, chunk);
-    });
-
-    child.on("error", (error) => {
-      if (error && error.code === "ENOENT") {
-        reject(
-          new AppError("ffmpeg is not installed or is not available on PATH.", 503)
-        );
-        return;
-      }
-
-      reject(new AppError("The server could not start ffmpeg.", 500));
-    });
-
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new AppError(normalizeFfmpegMessage(stderr, stdout), 422));
-    });
-  });
-}
-
 function getStreamLinkName(index, totalLinks, settings) {
   if (settings.audioOnly) {
     return totalLinks === 1 ? "audio stream" : `audio stream ${index + 1}`;
@@ -444,7 +342,11 @@ async function collectFiles(jobDir) {
       continue;
     }
 
-    if (entry.name.endsWith(".part") || entry.name.endsWith(".ytdl")) {
+    if (
+      entry.name.endsWith(".info.json") ||
+      entry.name.endsWith(".part") ||
+      entry.name.endsWith(".ytdl")
+    ) {
       continue;
     }
 
@@ -461,41 +363,65 @@ async function collectFiles(jobDir) {
   return files;
 }
 
-async function applyVideoConversion(jobDir, settings, onProgress) {
-  if (settings.audioOnly || settings.convertVideo === "none") {
-    return;
-  }
+function findFormatMetadata(result, formatId) {
+  const requestedFormats = Array.isArray(result?.requested_formats)
+    ? result.requested_formats
+    : [];
+  const requestedDownloads = Array.isArray(result?.requested_downloads)
+    ? result.requested_downloads
+    : [];
 
-  const files = await collectFiles(jobDir);
-  const videoFiles = files.filter((file) => isVideoFile(file.name));
+  return [...requestedDownloads, ...requestedFormats].find(
+    (candidate) => String(candidate?.format_id || "") === String(formatId)
+  );
+}
 
-  if (videoFiles.length === 0) {
-    throw new AppError(
-      "yt-dlp finished, but no video file was available for conversion.",
-      500
-    );
-  }
+function getFileMetadata(fileName, downloadMetadata) {
+  const suffixMatch = fileName.match(/_\[([^\]]+)\]__([^/]+)\.[^.]+$/);
+  const mediaIdFromName = suffixMatch?.[1] || "";
+  const formatIdFromName = suffixMatch?.[2] || "";
 
-  for (const [index, file] of videoFiles.entries()) {
-    emitProgress(onProgress, {
-      downloadedBytes: null,
-      etaSeconds: null,
-      message:
-        settings.convertVideo === "remux"
-          ? `Remuxing ${index + 1}/${videoFiles.length}...`
-          : `Encoding ${index + 1}/${videoFiles.length}...`,
-      percent: null,
-      phase: "postprocessing",
-      totalBytes: null
+  for (const result of downloadMetadata) {
+    const candidates = [
+      ...(Array.isArray(result?.requested_downloads)
+        ? result.requested_downloads
+        : []),
+      ...(Array.isArray(result?.requested_formats)
+        ? result.requested_formats
+        : []),
+      result
+    ];
+
+    let candidate = candidates.find((entry) => {
+      const candidatePath =
+        entry?.filepath || entry?._filename || entry?.filename || "";
+      return candidatePath && path.basename(candidatePath) === fileName;
     });
 
-    const inputPath = path.join(jobDir, file.name);
-    const outputName = getConvertedFileName(file.name, settings.convertVideo);
-    const outputPath = path.join(jobDir, outputName);
+    if (!candidate && mediaIdFromName === String(result?.id || "")) {
+      candidate = findFormatMetadata(result, formatIdFromName);
+    }
 
-    await runFfmpeg(buildFfmpegArgs(inputPath, outputPath, settings.convertVideo));
-    await fs.rm(inputPath, { force: true });
+    if (!candidate) {
+      continue;
+    }
+
+    const videoCodec = String(candidate.vcodec || "none");
+    const audioCodec = String(candidate.acodec || "none");
+
+    return {
+      audioCodec,
+      formatId: String(candidate.format_id || formatIdFromName || "unknown"),
+      hasAudio: audioCodec !== "none",
+      hasVideo: videoCodec !== "none",
+      mediaId: String(result.id || mediaIdFromName),
+      sourceFormat: path.extname(fileName).slice(1).toLowerCase(),
+      title: String(result.title || result.fulltitle || mediaIdFromName),
+      videoCodec
+    };
   }
+
+  return null;
 }
 
 export async function ensureDownloadDir(config) {
@@ -613,10 +539,6 @@ export async function executeDownloadJob({
 
   await fs.mkdir(jobDir, { recursive: true });
 
-  if (!settings.audioOnly && settings.convertVideo !== "none") {
-    await ensureFfmpegAvailable();
-  }
-
   emitProgress(onProgress, {
     downloadedBytes: null,
     etaSeconds: null,
@@ -626,12 +548,10 @@ export async function executeDownloadJob({
     totalBytes: null
   });
 
-  await runYtDlp(
+  const downloadMetadata = await runYtDlp(
     buildYtDlpArgs(settings.mediaUrl, settings, config, jobDir, proxyUrl),
     onProgress
   );
-
-  await applyVideoConversion(jobDir, settings, onProgress);
 
   const files = await collectFiles(jobDir);
 
@@ -642,8 +562,31 @@ export async function executeDownloadJob({
     );
   }
 
+  const describedFiles = files.map((file) => ({
+    ...file,
+    metadata: getFileMetadata(file.name, downloadMetadata)
+  }));
+  const unidentifiedFile = describedFiles.find((file) => !file.metadata);
+
+  if (unidentifiedFile) {
+    throw new AppError(
+      `yt-dlp finished, but track metadata was missing for ${unidentifiedFile.name}.`,
+      500
+    );
+  }
+
+  emitProgress(onProgress, {
+    downloadedBytes: null,
+    etaSeconds: null,
+    message: "Ready for browser processing.",
+    percent: 100,
+    phase: "postprocessing",
+    totalBytes: null
+  });
+
   return {
-    files: files.map((file) => ({
+    files: describedFiles.map((file) => ({
+      ...file.metadata,
       name: file.name,
       size: file.size,
       url: `/api/downloads/${jobId}/${encodeURIComponent(file.name)}`

@@ -2,15 +2,20 @@
   "name": "yt-dlp-web-ui",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
-  "description": "Minimal yt-dlp web UI built with native Node.js APIs only.",
+  "description": "Minimal yt-dlp web UI.",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "check": "node --check public/app.js && node --check src/app-server.js && node --check src/auth.js && node --check src/config.js && node --check src/download.js && node --check src/errors.js && node --check src/jobs.js && node --check src/network.js && node --check src/progress.js && node --check src/proxy.js && node --check src/server.js",
+    "check": "node --check public/app.js && node --check public/media-groups.js && node --check public/media.js && node --check src/app-server.js && node --check src/auth.js && node --check src/config.js && node --check src/download.js && node --check src/errors.js && node --check src/jobs.js && node --check src/network.js && node --check src/progress.js && node --check src/proxy.js && node --check src/server.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "@mediabunny/mp3-encoder": "1.55.7",
+    "mediabunny": "1.55.7"
   }
 }

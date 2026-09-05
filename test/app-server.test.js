@@ -365,6 +365,21 @@ test("POST /api/download creates a job and snapshots reflect progress", async (t
   assert.equal(completeSnapshot.payload.files[0].name, "clip.mp4");
 });
 
+test("browser dependency bundles are served without exposing node_modules", async (t) => {
+  const app = await startServer(t);
+  const vendorResponse = await fetch(`${app.baseUrl}/vendor/mediabunny.js`);
+  const blockedResponse = await fetch(
+    `${app.baseUrl}/node_modules/mediabunny/package.json`
+  );
+
+  assert.equal(vendorResponse.status, 200);
+  assert.match(
+    vendorResponse.headers.get("content-type") || "",
+    /^text\/javascript/
+  );
+  assert.equal(blockedResponse.status, 404);
+});
+
 test("job SSE sends snapshot, progress, then complete", async (t) => {
   const controller = createControlledExecutor();
   const app = await startServer(t, {
